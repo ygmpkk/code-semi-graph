@@ -5,10 +5,14 @@ A command line for semi or graph code search
 
 - **Semi Code Search**: Perform semi-structured code search with customizable options
   - **Build Index**: Build embedding index using Transformer models (Qwen3-Embedding-0.6B)
-  - **Search**: Search code using the built index
+  - **SQLite Vector Database**: Store code embeddings in SQLite for efficient similarity search
+  - **Search**: Search code using the built index with cosine similarity
 - **Graph Code Search**: Perform graph-based code search with traversal capabilities
+  - **SQLite Graph Database**: Store code relationships (classes, methods, inheritance, calls) in SQLite
+  - **Graph Traversal**: BFS and DFS traversal with relationship filtering
+  - **Relationship Types**: Support for extends, implements, contains, calls, uses relationships
 - Built with [picocli](https://picocli.info/) for a robust CLI experience
-- Java 21+ compatible
+- Java 17+ compatible
 - Gradle build system
 
 ## Building the Project
@@ -53,11 +57,16 @@ java -jar build/libs/code-semi-graph-1.0.0.jar --version
 
 #### Building the Index
 
-Before searching, you should build an embedding index for your codebase:
+Before searching, you should build an embedding index for your codebase. This creates a SQLite vector database with code embeddings:
 
 ```bash
 java -jar build/libs/code-semi-graph-1.0.0.jar semi build
 ```
+
+The build command will:
+- Scan your codebase for code files
+- Generate embeddings for each file (currently using mock embeddings)
+- Store embeddings in a SQLite database at `./.code-index/embeddings.db`
 
 Available options:
 - `-p, --path <path>`: Path to build index from (default: current directory)
@@ -94,22 +103,40 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi "function name" --path /src 
 
 ### Graph Code Search
 
-Perform a graph-based code search:
+Perform a graph-based code search using SQLite graph database. The graph database stores code relationships such as class inheritance, method calls, and imports.
 
 ```bash
 java -jar build/libs/code-semi-graph-1.0.0.jar graph "node identifier"
 ```
+
+The graph search command will:
+- Create a sample graph database if it doesn't exist (for demonstration)
+- Find the starting node by name
+- Traverse the graph using BFS or DFS
+- Display all connected nodes
 
 Available options:
 - `-p, --path <path>`: Path to search in (default: current directory)
 - `-t, --traversal <type>`: Graph traversal type: BFS or DFS (default: BFS)
 - `-m, --max-nodes <number>`: Maximum number of nodes to visit
 - `-r, --relationship <type1,type2>`: Filter by relationship type (comma-separated)
+  - Supported types: `extends`, `implements`, `contains`, `calls`, `uses`
+- `--db-path <path>`: Path to graph database (default: ./.code-index/graph.db)
 - `-h, --help`: Display help for the graph command
 
-Example:
+Example with BFS traversal:
 ```bash
-java -jar build/libs/code-semi-graph-1.0.0.jar graph "MyClass" --path /src --traversal DFS --max-nodes 100
+java -jar build/libs/code-semi-graph-1.0.0.jar graph "MyClass" --traversal BFS
+```
+
+Example with relationship filtering:
+```bash
+java -jar build/libs/code-semi-graph-1.0.0.jar graph "MyClass" --relationship "contains,calls"
+```
+
+Example with DFS and custom database path:
+```bash
+java -jar build/libs/code-semi-graph-1.0.0.jar graph "MyClass" --traversal DFS --db-path /path/to/graph.db
 ```
 
 ## Testing
@@ -120,10 +147,45 @@ Run the test suite:
 ./gradlew test
 ```
 
+## Database Architecture
+
+The application uses SQLite for both vector and graph database storage:
+
+### Vector Database
+- **Location**: `./.code-index/embeddings.db`
+- **Purpose**: Store code embeddings for semantic search
+- **Schema**:
+  - `embeddings` table: Stores file paths, content, and embedding vectors (JSON)
+  - Indexed on `file_path` for fast lookups
+- **Search**: Uses cosine similarity to find similar code
+
+### Graph Database
+- **Location**: `./.code-index/graph.db`
+- **Purpose**: Store code relationships and enable graph traversal
+- **Schema**:
+  - `nodes` table: Stores code entities (classes, methods, functions)
+  - `edges` table: Stores relationships between nodes
+  - Indexed on node names, types, and relationship types
+- **Traversal**: Supports BFS and DFS with relationship filtering
+
+### Database Operations
+
+View vector database contents:
+```bash
+sqlite3 ./.code-index/embeddings.db "SELECT file_path, length(embedding) FROM embeddings;"
+```
+
+View graph database contents:
+```bash
+sqlite3 ./.code-index/graph.db "SELECT * FROM nodes;"
+sqlite3 ./.code-index/graph.db "SELECT * FROM edges;"
+```
+
 ## Requirements
 
-- Java 21 or higher
+- Java 17 or higher
 - Gradle 8.14 or higher (included via Gradle wrapper)
+- SQLite (included via JDBC driver)
 
 ## Development
 
@@ -136,7 +198,12 @@ src/
 │           ├── CodeSearchCLI.java         # Main CLI entry point
 │           ├── SemiSearchCommand.java     # Semi search command group
 │           ├── SemiBuildCommand.java      # Semi build index command
-│           └── GraphSearchCommand.java    # Graph search command
+│           ├── GraphSearchCommand.java    # Graph search command
+│           └── db/
+│               ├── VectorDatabase.java         # Vector DB interface
+│               ├── SqliteVectorDatabase.java   # SQLite vector implementation
+│               ├── GraphDatabase.java          # Graph DB interface
+│               └── SqliteGraphDatabase.java    # SQLite graph implementation
 └── test/
     └── java/
         └── com/ygmpkk/codesearch/
