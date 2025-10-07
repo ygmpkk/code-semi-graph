@@ -17,14 +17,14 @@ import java.util.concurrent.Callable;
  * A command line tool for semi or graph code search
  */
 @Command(
-    name = "code-search",
-    mixinStandardHelpOptions = true,
-    version = "code-search 1.0.0",
-    description = "A command line for semi or graph code search",
-    subcommands = {
-        SemiSearchCommand.class,
-        GraphSearchCommand.class
-    }
+        name = "code-search",
+        mixinStandardHelpOptions = true,
+        version = "code-search 1.0.0",
+        description = "A command line for semi or graph code search",
+        subcommands = {
+                SemiSearchCommand.class,
+                GraphSearchCommand.class
+        }
 )
 public class CodeSearchCLI implements Callable<Integer> {
     private static Logger logger = LogManager.getLogger(CodeSearchCLI.class);
@@ -52,12 +52,12 @@ public class CodeSearchCLI implements Callable<Integer> {
     }
 
     private Level calcLogLevel() {
-        switch (loggingMixin.verbosity.length) {
-            case 0:  return Level.WARN;
-            case 1:  return Level.INFO;
-            case 2:  return Level.DEBUG;
-            default: return Level.TRACE;
-        }
+        return switch (loggingMixin.verbosity.length) {
+            case 0 -> Level.WARN;
+            case 1 -> Level.INFO;
+            case 2 -> Level.DEBUG;
+            default -> Level.TRACE;
+        };
     }
 
     // A reference to this method can be used as a custom execution strategy

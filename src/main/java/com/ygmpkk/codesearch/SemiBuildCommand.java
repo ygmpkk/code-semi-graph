@@ -28,7 +28,7 @@ public class SemiBuildCommand implements Callable<Integer> {
     private static Logger logger = LogManager.getLogger(SemiBuildCommand.class);
 
     @Mixin
-    LoggingMixin loggingMixin;
+    LoggingMixin ;
 
     @Option(
         names = {"-p", "--path"},
