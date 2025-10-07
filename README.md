@@ -6,7 +6,7 @@ A command line for semi or graph code search
 - **Semi Code Search**: Perform semi-structured code search with customizable options
 - **Graph Code Search**: Perform graph-based code search with traversal capabilities
 - Built with [picocli](https://picocli.info/) for a robust CLI experience
-- Java 11+ compatible
+- Java 21+ compatible
 - Gradle build system
 
 ## Building the Project
