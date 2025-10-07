@@ -12,7 +12,7 @@ A command line for semi or graph code search
   - **Graph Traversal**: BFS and DFS traversal with relationship filtering
   - **Relationship Types**: Support for extends, implements, contains, calls, uses relationships
 - Built with [picocli](https://picocli.info/) for a robust CLI experience
-- Java 17+ compatible
+- Java 21+ compatible
 - Gradle build system
 
 ## Building the Project
@@ -183,7 +183,7 @@ sqlite3 ./.code-index/graph.db "SELECT * FROM edges;"
 
 ## Requirements
 
-- Java 17 or higher
+- Java 21 or higher
 - Gradle 8.14 or higher (included via Gradle wrapper)
 - SQLite (included via JDBC driver)
 
