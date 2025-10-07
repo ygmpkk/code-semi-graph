@@ -72,4 +72,22 @@ public class CodeSearchCLITest {
         int exitCode = cmd.execute("graph", "test-node", "--path", "/tmp", "--traversal", "DFS", "--max-nodes", "100");
         assertEquals(0, exitCode, "Graph search with options should return exit code 0");
     }
+
+    @Test
+    public void testSemiBuildCommand() {
+        CodeSearchCLI app = new CodeSearchCLI();
+        CommandLine cmd = new CommandLine(app);
+        
+        int exitCode = cmd.execute("semi", "build", "--path", "/tmp");
+        assertEquals(0, exitCode, "Semi build command should return exit code 0");
+    }
+
+    @Test
+    public void testSemiBuildCommandWithOptions() {
+        CodeSearchCLI app = new CodeSearchCLI();
+        CommandLine cmd = new CommandLine(app);
+        
+        int exitCode = cmd.execute("semi", "build", "--path", "/tmp", "--output", "/tmp/test-index", "--extensions", "java,kt", "--batch-size", "16");
+        assertEquals(0, exitCode, "Semi build with options should return exit code 0");
+    }
 }

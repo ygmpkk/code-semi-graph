@@ -1,24 +1,36 @@
 package com.ygmpkk.codesearch;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.util.concurrent.Callable;
 
 /**
- * Command for performing semi code search
+ * Command for performing semi code search with subcommands
  */
 @Command(
     name = "semi",
-    description = "Perform semi code search",
-    mixinStandardHelpOptions = true
+    description = "Perform semi code search operations",
+    mixinStandardHelpOptions = true,
+    subcommands = {
+        SemiBuildCommand.class
+    }
 )
 public class SemiSearchCommand implements Callable<Integer> {
+    private static Logger logger = LogManager.getLogger(SemiSearchCommand.class);
+
+    @Mixin
+    LoggingMixin loggingMixin;
 
     @Parameters(
         index = "0",
-        description = "Search query"
+        description = "Search query",
+        arity = "0..1"
     )
     private String query;
 
@@ -43,20 +55,32 @@ public class SemiSearchCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        System.out.println("Performing semi code search...");
-        System.out.println("Query: " + query);
-        System.out.println("Path: " + path);
+        // If no query is provided, show help
+        if (query == null || query.isEmpty()) {
+            logger.info("Use 'semi --help' to see available commands and options");
+            logger.info("Available subcommands:");
+            logger.info("  build - Build embedding index for code search");
+            logger.info("");
+            logger.info("Or provide a search query to perform a search:");
+            logger.info("  semi \"your query\" [options]");
+            return 0;
+        }
+        
+        logger.info("Performing semi code search...");
+        logger.info("Query: {}", query);
+        logger.info("Path: {}", path);
         
         if (maxDepth != null) {
-            System.out.println("Max depth: " + maxDepth);
+            logger.info("Max depth: {}", maxDepth);
         }
         
         if (extensions != null && extensions.length > 0) {
-            System.out.println("Extensions: " + String.join(", ", extensions));
+            logger.info("Extensions: {}", String.join(", ", extensions));
         }
         
         // TODO: Implement actual semi search logic
-        System.out.println("\nSemi search completed (implementation pending)");
+        logger.info("");
+        logger.info("Semi search completed (implementation pending)");
         
         return 0;
     }

@@ -40,3 +40,6 @@ bin/
 
 # virtual machine crash logs
 hs_err_pid*
+
+# Code search index
+.code-index/

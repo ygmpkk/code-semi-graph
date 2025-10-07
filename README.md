@@ -4,6 +4,8 @@ A command line for semi or graph code search
 ## Features
 
 - **Semi Code Search**: Perform semi-structured code search with customizable options
+  - **Build Index**: Build embedding index using Transformer models (Qwen3-Embedding-0.6B)
+  - **Search**: Search code using the built index
 - **Graph Code Search**: Perform graph-based code search with traversal capabilities
 - Built with [picocli](https://picocli.info/) for a robust CLI experience
 - Java 21+ compatible
@@ -48,6 +50,30 @@ java -jar build/libs/code-semi-graph-1.0.0.jar --version
 ```
 
 ### Semi Code Search
+
+#### Building the Index
+
+Before searching, you should build an embedding index for your codebase:
+
+```bash
+java -jar build/libs/code-semi-graph-1.0.0.jar semi build
+```
+
+Available options:
+- `-p, --path <path>`: Path to build index from (default: current directory)
+- `-o, --output <path>`: Output directory for the index (default: ./.code-index)
+- `-d, --depth <number>`: Maximum directory depth to traverse
+- `-e, --extensions <ext1,ext2>`: File extensions to index (comma-separated)
+- `-m, --model <model>`: Embedding model to use (default: Qwen/Qwen3-Embedding-0.6B)
+- `--batch-size <size>`: Batch size for processing files (default: 32)
+- `-h, --help`: Display help for the build command
+
+Example:
+```bash
+java -jar build/libs/code-semi-graph-1.0.0.jar semi build --path ./src --extensions java,kt --batch-size 16
+```
+
+#### Searching Code
 
 Perform a semi-structured code search:
 
@@ -108,7 +134,8 @@ src/
 │   └── java/
 │       └── com/ygmpkk/codesearch/
 │           ├── CodeSearchCLI.java         # Main CLI entry point
-│           ├── SemiSearchCommand.java     # Semi search command
+│           ├── SemiSearchCommand.java     # Semi search command group
+│           ├── SemiBuildCommand.java      # Semi build index command
 │           └── GraphSearchCommand.java    # Graph search command
 └── test/
     └── java/
