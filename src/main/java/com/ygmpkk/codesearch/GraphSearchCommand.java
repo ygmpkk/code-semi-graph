@@ -1,6 +1,10 @@
 package com.ygmpkk.codesearch;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
@@ -15,6 +19,10 @@ import java.util.concurrent.Callable;
     mixinStandardHelpOptions = true
 )
 public class GraphSearchCommand implements Callable<Integer> {
+    private static Logger logger = LogManager.getLogger(GraphSearchCommand.class);
+
+    @Mixin
+    LoggingMixin loggingMixin;
 
     @Parameters(
         index = "0",
@@ -49,21 +57,22 @@ public class GraphSearchCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        System.out.println("Performing graph code search...");
-        System.out.println("Query: " + query);
-        System.out.println("Path: " + path);
-        System.out.println("Traversal type: " + traversalType);
+        logger.info("Performing graph code search...");
+        logger.info("Query: {}", query);
+        logger.info("Path: {}", path);
+        logger.info("Traversal type: {}", traversalType);
         
         if (maxNodes != null) {
-            System.out.println("Max nodes: " + maxNodes);
+            logger.info("Max nodes: {}", maxNodes);
         }
         
         if (relationships != null && relationships.length > 0) {
-            System.out.println("Relationships: " + String.join(", ", relationships));
+            logger.info("Relationships: {}", String.join(", ", relationships));
         }
         
         // TODO: Implement actual graph search logic
-        System.out.println("\nGraph search completed (implementation pending)");
+        logger.info("");
+        logger.info("Graph search completed (implementation pending)");
         
         return 0;
     }

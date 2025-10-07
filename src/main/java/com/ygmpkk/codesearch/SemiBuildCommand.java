@@ -1,9 +1,12 @@
 package com.ygmpkk.codesearch;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import picocli.CommandLine.Command;
+import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +25,10 @@ import java.util.stream.Stream;
     mixinStandardHelpOptions = true
 )
 public class SemiBuildCommand implements Callable<Integer> {
+    private static Logger logger = LogManager.getLogger(SemiBuildCommand.class);
+
+    @Mixin
+    LoggingMixin loggingMixin;
 
     @Option(
         names = {"-p", "--path"},
@@ -62,18 +69,18 @@ public class SemiBuildCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        System.out.println("Building embedding index...");
-        System.out.println("Source path: " + path);
-        System.out.println("Output directory: " + outputDir);
-        System.out.println("Model: " + model);
-        System.out.println("Batch size: " + batchSize);
+        logger.info("Building embedding index...");
+        logger.info("Source path: {}", path);
+        logger.info("Output directory: {}", outputDir);
+        logger.info("Model: {}", model);
+        logger.info("Batch size: {}", batchSize);
         
         if (maxDepth != null) {
-            System.out.println("Max depth: " + maxDepth);
+            logger.info("Max depth: {}", maxDepth);
         }
         
         if (extensions != null && extensions.length > 0) {
-            System.out.println("Extensions: " + String.join(", ", extensions));
+            logger.info("Extensions: {}", String.join(", ", extensions));
         }
 
         try {
@@ -83,21 +90,24 @@ public class SemiBuildCommand implements Callable<Integer> {
             
             // Collect files to index
             List<Path> filesToIndex = collectFiles();
-            System.out.println("\nFound " + filesToIndex.size() + " files to index");
+            logger.info("");
+            logger.info("Found {} files to index", filesToIndex.size());
             
             if (filesToIndex.isEmpty()) {
-                System.out.println("No files found to index. Exiting.");
+                logger.info("No files found to index. Exiting.");
                 return 0;
             }
             
             // TODO: Initialize embedding model (Qwen3-Embedding-0.6B)
             // For now, we'll just simulate the process
-            System.out.println("\nInitializing embedding model: " + model);
-            System.out.println("Note: Model loading requires DJL and Hugging Face transformers");
-            System.out.println("This is a placeholder implementation.");
+            logger.info("");
+            logger.info("Initializing embedding model: {}", model);
+            logger.info("Note: Model loading requires DJL and Hugging Face transformers");
+            logger.info("This is a placeholder implementation.");
             
             // Process files in batches
-            System.out.println("\nProcessing files in batches of " + batchSize + "...");
+            logger.info("");
+            logger.info("Processing files in batches of {}...", batchSize);
             int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
             
             for (int i = 0; i < filesToIndex.size(); i += batchSize) {
@@ -105,23 +115,23 @@ public class SemiBuildCommand implements Callable<Integer> {
                 int endIdx = Math.min(i + batchSize, filesToIndex.size());
                 List<Path> batch = filesToIndex.subList(i, endIdx);
                 
-                System.out.println("Processing batch " + batchNum + "/" + totalBatches + 
-                                 " (" + batch.size() + " files)");
+                logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
                 
                 // TODO: Generate embeddings for batch
                 // TODO: Store embeddings in index
                 
                 for (Path file : batch) {
-                    System.out.println("  - " + file);
+                    logger.debug("  - {}", file);
                 }
             }
             
-            System.out.println("\n✓ Embedding index built successfully!");
-            System.out.println("Index location: " + outputPath.toAbsolutePath());
+            logger.info("");
+            logger.info("✓ Embedding index built successfully!");
+            logger.info("Index location: {}", outputPath.toAbsolutePath());
             
         } catch (IOException e) {
-            System.err.println("Error building index: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("Error building index: {}", e.getMessage());
+            logger.debug("Stack trace:", e);
             return 1;
         }
         
@@ -133,7 +143,7 @@ public class SemiBuildCommand implements Callable<Integer> {
         Path sourcePath = Paths.get(path);
         
         if (!Files.exists(sourcePath)) {
-            System.err.println("Error: Path does not exist: " + path);
+            logger.error("Error: Path does not exist: {}", path);
             return files;
         }
         
@@ -161,7 +171,7 @@ public class SemiBuildCommand implements Callable<Integer> {
                 .forEach(files::add);
         } catch (Exception e) {
             // If walk fails completely, try to handle gracefully
-            System.err.println("Warning: Error traversing directory: " + e.getMessage());
+            logger.warn("Warning: Error traversing directory: {}", e.getMessage());
         }
         
         return files;
