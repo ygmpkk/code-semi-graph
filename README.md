@@ -97,7 +97,7 @@ Run the test suite:
 ## Requirements
 
 - Java 21 or higher
-- Gradle 8.4 or higher (included via Gradle wrapper)
+- Gradle 8.14 or higher (included via Gradle wrapper)
 
 ## Development
 
