@@ -35,7 +35,9 @@ public class CodeSearchCLI implements Callable<Integer> {
     public Integer call() {
         System.out.println("Use 'code-search --help' to see available commands");
         System.out.println("Available commands:");
-        System.out.println("  semi  - Perform semi code search");
+        System.out.println("  semi  - Perform semi code search operations");
+        System.out.println("          - semi <query> [options]  : Search code");
+        System.out.println("          - semi build [options]    : Build embedding index");
         System.out.println("  graph - Perform graph code search");
         return 0;
     }

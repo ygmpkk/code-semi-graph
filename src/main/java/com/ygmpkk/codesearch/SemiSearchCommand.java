@@ -7,18 +7,22 @@ import picocli.CommandLine.Parameters;
 import java.util.concurrent.Callable;
 
 /**
- * Command for performing semi code search
+ * Command for performing semi code search with subcommands
  */
 @Command(
     name = "semi",
-    description = "Perform semi code search",
-    mixinStandardHelpOptions = true
+    description = "Perform semi code search operations",
+    mixinStandardHelpOptions = true,
+    subcommands = {
+        SemiBuildCommand.class
+    }
 )
 public class SemiSearchCommand implements Callable<Integer> {
 
     @Parameters(
         index = "0",
-        description = "Search query"
+        description = "Search query",
+        arity = "0..1"
     )
     private String query;
 
@@ -43,6 +47,16 @@ public class SemiSearchCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        // If no query is provided, show help
+        if (query == null || query.isEmpty()) {
+            System.out.println("Use 'semi --help' to see available commands and options");
+            System.out.println("Available subcommands:");
+            System.out.println("  build - Build embedding index for code search");
+            System.out.println("\nOr provide a search query to perform a search:");
+            System.out.println("  semi \"your query\" [options]");
+            return 0;
+        }
+        
         System.out.println("Performing semi code search...");
         System.out.println("Query: " + query);
         System.out.println("Path: " + path);
