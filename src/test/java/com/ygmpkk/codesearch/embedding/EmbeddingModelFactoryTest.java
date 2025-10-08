@@ -43,7 +43,7 @@ class EmbeddingModelFactoryTest {
     
     @Test
     void testCreateHttpModel() throws Exception {
-        try (EmbeddingModel model = EmbeddingModelFactory.createModel("http://localhost:8080/embeddings", null, null)) {
+        try (EmbeddingModel model = EmbeddingModelFactory.createModel("http://localhost:8080/embeddings", "qwen3-embedding:0.6b", 768, null, null)) {
             assertNotNull(model);
             assertTrue(model instanceof HttpEmbeddingModel);
             assertEquals(768, model.getEmbeddingDimension());
@@ -52,7 +52,7 @@ class EmbeddingModelFactoryTest {
     
     @Test
     void testCreateHttpsModel() throws Exception {
-        try (EmbeddingModel model = EmbeddingModelFactory.createModel("https://api.example.com/embeddings", null, "test-key")) {
+        try (EmbeddingModel model = EmbeddingModelFactory.createModel("https://api.example.com/embeddings", "qwen3-embedding:0.6b", 768, null, "test-key")) {
             assertNotNull(model);
             assertTrue(model instanceof HttpEmbeddingModel);
         }
@@ -63,7 +63,7 @@ class EmbeddingModelFactoryTest {
         String modelPath = "/tmp/test-model";
         // DJL model initialization will fail without actual model files, which is expected
         // We just verify that the factory creates the right type
-        try (EmbeddingModel model = EmbeddingModelFactory.createModel("Qwen/Qwen3-Embedding-0.6B", modelPath, null)) {
+        try (EmbeddingModel model = EmbeddingModelFactory.createModel("Qwen/Qwen3-Embedding-0.6B", null, null, modelPath, null)) {
             fail("Should fail because model doesn't exist at path");
         } catch (Exception e) {
             // Expected - model doesn't exist
@@ -75,7 +75,7 @@ class EmbeddingModelFactoryTest {
     @Test
     void testCreateModelFallsBackToMock() throws Exception {
         // Unknown model name without path should fall back to mock
-        try (EmbeddingModel model = EmbeddingModelFactory.createModel("UnknownModel", null, null)) {
+        try (EmbeddingModel model = EmbeddingModelFactory.createModel("UnknownModel", null, null, null, null)) {
             assertNotNull(model);
             assertTrue(model instanceof MockEmbeddingModel);
         }

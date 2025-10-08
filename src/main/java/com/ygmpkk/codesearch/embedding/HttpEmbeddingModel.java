@@ -49,7 +49,7 @@ public class HttpEmbeddingModel extends EmbeddingModel {
      * @param apiKey API key for authentication
      */
     public HttpEmbeddingModel(String modelName, String apiUrl, String apiKey) {
-        this(modelName, apiUrl, apiKey, 768);
+        this(modelName, apiUrl, apiKey, 1024);
     }
     
     /**
@@ -58,7 +58,7 @@ public class HttpEmbeddingModel extends EmbeddingModel {
      * @param apiUrl URL of the embedding API endpoint
      */
     public HttpEmbeddingModel(String modelName, String apiUrl) {
-        this(modelName, apiUrl, null, 768);
+        this(modelName, apiUrl, null, 1024);
     }
     
     @Override
