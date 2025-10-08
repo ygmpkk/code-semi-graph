@@ -37,6 +37,9 @@ dependencies {
     // YAML configuration support
     implementation 'org.yaml:snakeyaml:2.2'
 
+    // Tree-sitter for parsing source code AST
+    implementation 'ch.usi.si.seart:java-tree-sitter:1.12.0'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
 }

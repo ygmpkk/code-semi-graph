@@ -21,6 +21,22 @@ public interface VectorDatabase extends AutoCloseable {
     void storeEmbedding(String filePath, String content, float[] embedding) throws Exception;
     
     /**
+     * Store a code embedding with metadata
+     * @param filePath Path to the code file
+     * @param packageName Package name
+     * @param className Class name
+     * @param methodName Method name
+     * @param content Content of the code chunk
+     * @param embedding Vector embedding of the code
+     */
+    default void storeEmbeddingWithMetadata(String filePath, String packageName, String className, 
+                                           String methodName, String content, float[] embedding) throws Exception {
+        // Default implementation delegates to basic storeEmbedding
+        // Implementations can override to store additional metadata
+        storeEmbedding(filePath, content, embedding);
+    }
+    
+    /**
      * Search for similar code embeddings
      * @param queryEmbedding Query vector embedding
      * @param limit Maximum number of results to return
