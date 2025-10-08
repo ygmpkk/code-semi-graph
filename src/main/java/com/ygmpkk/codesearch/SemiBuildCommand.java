@@ -3,8 +3,13 @@ package com.ygmpkk.codesearch;
 import com.ygmpkk.codesearch.config.AppConfig;
 import com.ygmpkk.codesearch.config.ConfigLoader;
 import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
+import com.ygmpkk.codesearch.db.ArcadeDBGraphDatabase;
 import com.ygmpkk.codesearch.db.VectorDatabase;
+import com.ygmpkk.codesearch.db.GraphDatabase;
 import com.ygmpkk.codesearch.embedding.EmbeddingModel;
+import com.ygmpkk.codesearch.parser.TreeSitterParser;
+import com.ygmpkk.codesearch.parser.CodeMetadata;
+import com.ygmpkk.codesearch.parser.CodeChunker;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -83,13 +88,15 @@ public class SemiBuildCommand implements Callable<Integer> {
             Path resolvedSource = (sourcePath != null ? sourcePath : Paths.get(".")).toAbsolutePath().normalize();
             Path indexDirectory = SemiCommandSupport.resolveIndexDirectory(appConfig, outputDir);
             Path vectorDbPath = SemiCommandSupport.resolveVectorDatabasePath(indexDirectory);
+            Path graphDbPath = indexDirectory.resolve("arcadedb-graph");
 
-            logger.info("Building embedding index...");
+            logger.info("Building embedding index with tree-sitter parsing...");
             logger.info("Home directory: {}", resolvedHome);
             logger.info("Configuration file: {}", ConfigLoader.resolveConfigPath(resolvedHome));
             logger.info("Source path: {}", resolvedSource);
             logger.info("Index directory: {}", indexDirectory);
             logger.info("Vector database path: {}", vectorDbPath);
+            logger.info("Graph database path: {}", graphDbPath);
             logger.info("Model: {}", embeddingParameters.model());
             logger.info("Model name: {}", embeddingParameters.modelName());
             logger.info("Embedding dimension: {}", embeddingParameters.embeddingDimension());
@@ -106,9 +113,13 @@ public class SemiBuildCommand implements Callable<Integer> {
             }
 
             Files.createDirectories(vectorDbPath);
+            Files.createDirectories(graphDbPath);
 
-            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString())) {
+            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString());
+                 GraphDatabase graphDb = new ArcadeDBGraphDatabase(graphDbPath.toString())) {
+                
                 vectorDb.initialize();
+                graphDb.initialize();
 
                 List<Path> filesToIndex = collectFiles(resolvedSource);
                 logger.info("Found {} files to index", filesToIndex.size());
@@ -123,33 +134,112 @@ public class SemiBuildCommand implements Callable<Integer> {
                             embeddingModel.getModelName(),
                             embeddingModel.getEmbeddingDimension());
 
-                    int batchSize = embeddingParameters.batchSize();
-                    logger.info("Processing files in batches of {}...", batchSize);
-                    int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
+                    CodeChunker chunker = new CodeChunker();
+                    int totalChunks = 0;
+                    int totalCallChains = 0;
+                    TreeSitterParser treeSitterParser = null;
 
-                    for (int i = 0; i < filesToIndex.size(); i += batchSize) {
-                        int batchNum = (i / batchSize) + 1;
-                        int endIdx = Math.min(i + batchSize, filesToIndex.size());
-                        List<Path> batch = filesToIndex.subList(i, endIdx);
-
-                        logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
-
-                        for (Path file : batch) {
-                            try {
+                    for (Path file : filesToIndex) {
+                        try {
+                            // Parse the file with tree-sitter (only Java files for now)
+                            if (!file.toString().endsWith(".java")) {
+                                // Fall back to simple embedding for non-Java files
                                 String content = Files.readString(file);
                                 float[] embedding = embeddingModel.generateEmbedding(content);
                                 vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                logger.debug("Indexed: {}", file);
-                            } catch (Exception e) {
-                                logger.warn("Failed to index {}: {}", file, e.getMessage());
+                                logger.debug("Indexed (non-Java): {}", file);
+                                continue;
                             }
+
+                            // Lazy initialization of tree-sitter parser for Java files
+                            if (treeSitterParser == null) {
+                                try {
+                                    treeSitterParser = new TreeSitterParser();
+                                    logger.debug("TreeSitter parser initialized for Java parsing");
+                                } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+                                    logger.warn("TreeSitter native libraries not available. Falling back to simple indexing: {}", e.getMessage());
+                                    // Fall back to simple embedding
+                                    String content = Files.readString(file);
+                                    float[] embedding = embeddingModel.generateEmbedding(content);
+                                    vectorDb.storeEmbedding(file.toString(), content, embedding);
+                                    logger.debug("Indexed (fallback): {}", file);
+                                    continue;
+                                }
+                            }
+
+                            CodeMetadata metadata = treeSitterParser.parseJavaFile(file);
+                            logger.debug("Parsed {}: package={}, class={}, methods={}",
+                                    file, metadata.packageName(), metadata.className(), metadata.methods().size());
+
+                            // Add class node to graph
+                            String classNodeId = metadata.filePath() + ":" + metadata.className();
+                            graphDb.addNode(classNodeId, "class", metadata.className(), metadata.filePath());
+
+                            // Process call chains and add to graph
+                            for (CodeMetadata.MethodInfo method : metadata.methods()) {
+                                String methodNodeId = classNodeId + ":" + method.name();
+                                graphDb.addNode(methodNodeId, "method", method.name(), metadata.filePath());
+                                
+                                // Link method to class
+                                graphDb.addEdge(classNodeId, methodNodeId, "contains");
+                                
+                                // Add call relationships
+                                for (String callee : method.callees()) {
+                                    String calleeNodeId = classNodeId + ":" + callee;
+                                    // Create callee node if it doesn't exist (might be external)
+                                    graphDb.addNode(calleeNodeId, "method", callee, metadata.filePath());
+                                    graphDb.addEdge(methodNodeId, calleeNodeId, "calls");
+                                    totalCallChains++;
+                                }
+                            }
+
+                            // Chunk the code
+                            List<CodeChunker.CodeChunk> chunks = chunker.chunkCode(metadata);
+                            logger.debug("Created {} chunks from {}", chunks.size(), file);
+
+                            // Store each chunk with embedding
+                            for (CodeChunker.CodeChunk chunk : chunks) {
+                                String chunkContent = chunk.getFullContext();
+                                float[] embedding = embeddingModel.generateEmbedding(chunkContent);
+                                
+                                vectorDb.storeEmbeddingWithMetadata(
+                                        chunk.filePath(),
+                                        chunk.packageName(),
+                                        chunk.className(),
+                                        chunk.methodName(),
+                                        chunkContent,
+                                        embedding
+                                );
+                                totalChunks++;
+                            }
+
+                            logger.debug("Indexed: {} ({} chunks)", file, chunks.size());
+                        } catch (Exception e) {
+                            logger.warn("Failed to index {}: {}", file, e.getMessage());
+                            logger.debug("Stack trace:", e);
+                        }
+                    }
+                    
+                    // Close tree-sitter parser if it was initialized
+                    if (treeSitterParser != null) {
+                        try {
+                            treeSitterParser.close();
+                        } catch (Exception e) {
+                            logger.debug("Error closing tree-sitter parser: {}", e.getMessage());
                         }
                     }
 
                     int embeddingCount = vectorDb.getEmbeddingCount();
+                    int nodeCount = graphDb.getNodeCount();
+                    int edgeCount = graphDb.getEdgeCount();
+                    
                     logger.info("✓ Embedding index built successfully!");
                     logger.info("Index location: {}", indexDirectory);
-                    logger.info("Total embeddings stored: {}", embeddingCount);
+                    logger.info("Total chunks stored: {}", totalChunks);
+                    logger.info("Total embeddings in vector DB: {}", embeddingCount);
+                    logger.info("Total nodes in graph DB: {}", nodeCount);
+                    logger.info("Total edges (call chains) in graph DB: {}", edgeCount);
+                    logger.info("Total call relationships extracted: {}", totalCallChains);
                 }
             }
         } catch (Exception e) {

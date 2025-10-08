@@ -40,12 +40,15 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
                 
                 // Create index on file_path for faster lookups using ArcadeDB schema API
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("filePath", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("packageName", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("className", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("methodName", String.class);
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("content", String.class);
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("embedding", float[].class);
                 
                 database.getSchema().createTypeIndex(
                     com.arcadedb.schema.Schema.INDEX_TYPE.LSM_TREE, 
-                    true, 
+                    false, 
                     EMBEDDING_TYPE, 
                     "filePath"
                 );
@@ -57,10 +60,20 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
     
     @Override
     public void storeEmbedding(String filePath, String content, float[] embedding) throws Exception {
+        storeEmbeddingWithMetadata(filePath, "", "", "", content, embedding);
+    }
+    
+    @Override
+    public void storeEmbeddingWithMetadata(String filePath, String packageName, String className,
+                                          String methodName, String content, float[] embedding) throws Exception {
         database.transaction(() -> {
+            // Create a unique key combining file path and method name
+            String uniqueKey = filePath + ":" + (methodName != null && !methodName.isEmpty() ? methodName : "file");
+            
             // Check if document already exists
             ResultSet result = database.query("sql", 
-                "SELECT FROM " + EMBEDDING_TYPE + " WHERE filePath = ?", filePath);
+                "SELECT FROM " + EMBEDDING_TYPE + " WHERE filePath = ? AND methodName = ?", 
+                filePath, methodName != null ? methodName : "");
             
             MutableDocument doc;
             if (result.hasNext()) {
@@ -72,11 +85,14 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
                 doc.set("filePath", filePath);
             }
             
+            doc.set("packageName", packageName != null ? packageName : "");
+            doc.set("className", className != null ? className : "");
+            doc.set("methodName", methodName != null ? methodName : "");
             doc.set("content", content);
             doc.set("embedding", embedding);
             doc.save();
             
-            logger.debug("Stored embedding for: {}", filePath);
+            logger.debug("Stored embedding for: {} (method: {})", filePath, methodName);
         });
     }
     

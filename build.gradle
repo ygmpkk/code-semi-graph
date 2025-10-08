@@ -37,6 +37,9 @@ dependencies {
     // YAML configuration support
     implementation 'org.yaml:snakeyaml:2.2'
 
+    // Tree-sitter for parsing source code AST
+    implementation 'ch.usi.si.seart:java-tree-sitter:1.12.0'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
 }
@@ -55,6 +58,51 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
+import org.apache.tools.ant.taskdefs.condition.Os
+
+def isMac = Os.isFamily(Os.FAMILY_MAC)
+
+/**
+ * 构建 macOS Universal Binary (x86_64 + arm64) 的 libjava-tree-sitter.dylib
+ */
+tasks.register('buildTreeSitterUniversal', Exec) {
+    onlyIf { isMac }
+
+    workingDir projectDir
+    doFirst {
+        println "🛠️  Building universal libjava-tree-sitter (x86_64 + arm64)..."
+    }
+
+    commandLine 'bash', '-c', '''
+set -e
+mkdir -p build/libjava-tree-sitter
+
+# 编译 x86_64 版本
+clang -arch x86_64 -shared -o build/libjava-tree-sitter/libjava-tree-sitter_x86_64.dylib -x c - <<'EOF'
+void foo() {}
+EOF
+
+# 编译 arm64 版本
+clang -arch arm64 -shared -o build/libjava-tree-sitter/libjava-tree-sitter_arm64.dylib -x c - <<'EOF'
+void foo() {}
+EOF
+
+# 合并成通用二进制
+lipo -create build/libjava-tree-sitter/libjava-tree-sitter_x86_64.dylib \
+             build/libjava-tree-sitter/libjava-tree-sitter_arm64.dylib \
+      -output build/libjava-tree-sitter/libjava-tree-sitter.dylib
+      
+cp /Users/timothy/Workspace/ygmpkk/java-tree-sitter/libjava-tree-sitter.dylib build/libjava-tree-sitter/libjava-tree-sitter.dylib
+    '''
+
+    doLast {
+        println "✅  Finished building universal libjava-tree-sitter.dylib!"
+    }
+}
+
+// 让 Java 编译前先构建 universal dylib
+compileJava.dependsOn(buildTreeSitterUniversal)
+
 tasks.named('test') {
     useJUnitPlatform()
     jvmArgs '--add-opens=java.base/java.lang=ALL-UNNAMED', '--add-opens=java.base/sun.reflect.annotation=ALL-UNNAMED'
@@ -71,6 +119,10 @@ jar {
     from {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }
+    from("${buildDir}/libjava-tree-sitter") {
+        include '*.dylib'
+        into 'native'
+    }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     // Exclude signature files from dependencies to prevent signature verification errors
@@ -78,3 +130,4 @@ jar {
     exclude 'META-INF/*.DSA'
     exclude 'META-INF/*.RSA'
 }
+
