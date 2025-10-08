@@ -71,20 +71,23 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi build
 The build command will:
 - Scan your codebase for code files
 - Generate embeddings for each file using the specified embedding model
-- Store embeddings in an ArcadeDB database at `./.code-index/arcadedb-vector`
+- Store embeddings in an ArcadeDB database at `~/.code-semi-graph/index/arcadedb-vector` by default
 
 Available options:
-- `-p, --path <path>`: Path to build index from (default: current directory)
-- `-o, --output <path>`: Output directory for the index (default: ./.code-index)
+- `-p, --path <path>`: Path to build the index from (default: current directory)
+- `-o, --output <path>`: Output directory for the index (defaults to the configured index directory)
 - `-d, --depth <number>`: Maximum directory depth to traverse
 - `-e, --extensions <ext1,ext2>`: File extensions to index (comma-separated)
-- `-m, --model <model>`: Embedding model to use (default: mock). Can be:
+- `-m, --model <model>`: Embedding model to use. Can be:
   - `mock`: Mock embeddings for testing (default)
   - `Qwen/Qwen3-Embedding-0.6B` or other model names: Use with `--model-path`
   - `http://...` or `https://...`: Remote API endpoint URL
+- `--model-name <name>`: Display name for the embedding model
 - `--model-path <path>`: Path to local model files for DJL models
+- `--embedding-dim <number>`: Embedding dimension override
 - `--api-key <key>`: API key for HTTP-based embedding models
-- `--batch-size <size>`: Batch size for processing files (default: 32)
+- `--batch-size <size>`: Batch size for processing files
+- `--home <dir>`: Override the configuration home directory (default: `~/.code-semi-graph`)
 - `-h, --help`: Display help for the build command
 
 #### Embedding Model Strategies
@@ -115,6 +118,28 @@ Example:
 java -jar build/libs/code-semi-graph-1.0.0.jar semi build --path ./src --extensions java,kt --batch-size 16
 ```
 
+#### Configuration File
+
+The CLI reads defaults from `config.yaml`, located in the home directory `~/.code-semi-graph/` by default. The file is created
+automatically the first time you run a command and can be customised to change the default embedding model, index location and
+search preferences.
+
+```yaml
+embedding:
+  model: mock
+  modelName: mock
+  embeddingDimension: 1536
+  modelPath: ./models/qwen
+  apiKey: your-api-key
+  batchSize: 32
+index:
+  directory: ./index
+search:
+  topK: 5
+```
+
+Use the `--home <dir>` option on any semi command to load configuration from an alternative directory.
+
 #### Searching Code
 
 Perform a semi-structured code search:
@@ -124,14 +149,15 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi "search query"
 ```
 
 Available options:
-- `-p, --path <path>`: Path to search in (default: current directory)
-- `-d, --depth <number>`: Maximum search depth
-- `-e, --extensions <ext1,ext2>`: File extensions to search (comma-separated)
+- `-i, --index-dir <path>`: Directory that contains the embedding index (defaults to the configured index directory)
+- `-l, --limit <number>`: Maximum number of results to display (defaults to configuration)
+- Embedding overrides: `-m/--model`, `--model-name`, `--model-path`, `--embedding-dim`, `--api-key`
+- `--home <dir>`: Override the configuration home directory
 - `-h, --help`: Display help for the semi command
 
 Example:
 ```bash
-java -jar build/libs/code-semi-graph-1.0.0.jar semi "function name" --path /src --depth 3 --extensions java,kt
+java -jar build/libs/code-semi-graph-1.0.0.jar semi "function name" --index-dir ~/.code-semi-graph/index --limit 5
 ```
 
 ### Graph Code Search
@@ -185,7 +211,7 @@ Run the test suite:
 The application uses ArcadeDB, a multi-model database with native support for both vector embeddings and graph operations.
 
 ### ArcadeDB
-- **Vector Database Location**: `./.code-index/arcadedb-vector`
+- **Vector Database Location**: `~/.code-semi-graph/index/arcadedb-vector`
 - **Graph Database Location**: `./.code-index/arcadedb-graph`
 - **Benefits**: Native graph support, efficient vector similarity search, multi-model (document, graph, vector)
 

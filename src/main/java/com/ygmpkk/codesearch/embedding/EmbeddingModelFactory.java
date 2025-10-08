@@ -12,8 +12,8 @@ public class EmbeddingModelFactory {
     /**
      * Create an embedding model based on the model name and configuration
      *
-     * @param model Type of model ("mock", "http", "djl")
-     * @param modelName Name of the model (e.g., "Qwen/Qwen3-Embedding-0.6B", "http://...", "mock")
+     * @param model Identifier describing the model to use (mock, HTTP URL, or DJL model id)
+     * @param modelName Display name for the model (optional)
      * @param embeddingDimension Optional embedding dimension (default depends on model)
      * @param modelPath Optional path to local model files (for DJL models)
      * @param apiKey Optional API key for HTTP models
@@ -21,35 +21,33 @@ public class EmbeddingModelFactory {
      * @throws Exception if model creation fails
      */
     public static EmbeddingModel createModel(String model, String modelName, Integer embeddingDimension, String modelPath, String apiKey) throws Exception {
-        logger.info("Creating embedding model: {}", modelName);
-        
+        String trimmedModel = normalize(model);
+        String resolvedName = resolveModelName(trimmedModel, modelName);
+        String effectiveModelId = trimmedModel != null ? trimmedModel : resolvedName;
+        String normalizedPath = modelPath != null ? modelPath.trim() : null;
+
+        logger.info("Creating embedding model: {}", resolvedName);
+
         EmbeddingModel embeddingModel;
-        
-        // Determine model type based on model name
-        if (model == null || model.isEmpty() || model.equalsIgnoreCase("mock")) {
-            // Mock model for testing
+
+        if (isMock(effectiveModelId)) {
             logger.info("Using mock embedding model");
-            embeddingModel = new MockEmbeddingModel(model != null ? model : "mock");
-            
-        } else if (model.startsWith("http://") || model.startsWith("https://")) {
-            // HTTP-based model
-            logger.info("Using HTTP embedding model with URL: {}", model);
-            embeddingModel = new HttpEmbeddingModel(modelName, model, apiKey);
-            
-        } else if (modelPath != null && !modelPath.isEmpty()) {
-            // DJL-based local model
-            logger.info("Using DJL embedding model from path: {}", modelPath);
-            embeddingModel = new DjlEmbeddingModel(model, modelPath);
-            
+            embeddingModel = new MockEmbeddingModel(resolvedName);
+        } else if (isHttp(effectiveModelId)) {
+            int dimension = embeddingDimension != null ? embeddingDimension : 1024;
+            logger.info("Using HTTP embedding model with URL: {} and dimension {}", effectiveModelId, dimension);
+            embeddingModel = new HttpEmbeddingModel(resolvedName, effectiveModelId, apiKey, dimension);
+        } else if (normalizedPath != null && !normalizedPath.isBlank()) {
+            logger.info("Using DJL embedding model from path: {}", normalizedPath);
+            embeddingModel = embeddingDimension != null
+                    ? new DjlEmbeddingModel(effectiveModelId, normalizedPath, embeddingDimension)
+                    : new DjlEmbeddingModel(effectiveModelId, normalizedPath);
         } else {
-            // Default to mock for unsupported configurations
-            logger.warn("Model type not recognized for '{}', falling back to mock model", model);
-            embeddingModel = new MockEmbeddingModel(model);
+            logger.warn("Model type not recognized for '{}', falling back to mock model", effectiveModelId);
+            embeddingModel = new MockEmbeddingModel(resolvedName);
         }
-        
-        // Initialize the model
+
         embeddingModel.initialize();
-        
         return embeddingModel;
     }
     
@@ -66,5 +64,31 @@ public class EmbeddingModelFactory {
      */
     public static EmbeddingModel createMockModel() throws Exception {
         return createModel("mock", "mock", null, null, null);
+    }
+
+    private static boolean isMock(String model) {
+        return model == null || model.isEmpty() || "mock".equalsIgnoreCase(model);
+    }
+
+    private static boolean isHttp(String model) {
+        return model != null && (model.startsWith("http://") || model.startsWith("https://"));
+    }
+
+    private static String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static String resolveModelName(String model, String modelName) {
+        if (modelName != null && !modelName.isBlank()) {
+            return modelName.trim();
+        }
+        if (model != null && !model.isBlank()) {
+            return model;
+        }
+        return "mock";
     }
 }
