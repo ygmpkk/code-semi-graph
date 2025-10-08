@@ -1,8 +1,18 @@
 package com.ygmpkk.codesearch;
 
+import com.ygmpkk.codesearch.analyzer.ClassInfo;
+import com.ygmpkk.codesearch.analyzer.CodeChunk;
+import com.ygmpkk.codesearch.analyzer.FileAnalysisResult;
+import com.ygmpkk.codesearch.analyzer.MethodCall;
+import com.ygmpkk.codesearch.analyzer.MethodInfo;
+import com.ygmpkk.codesearch.analyzer.MethodParameter;
+import com.ygmpkk.codesearch.analyzer.TokenAwareChunker;
+import com.ygmpkk.codesearch.analyzer.TreeSitterCodeAnalyzer;
 import com.ygmpkk.codesearch.config.AppConfig;
 import com.ygmpkk.codesearch.config.ConfigLoader;
+import com.ygmpkk.codesearch.db.ArcadeDBGraphDatabase;
 import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
+import com.ygmpkk.codesearch.db.GraphDatabase;
 import com.ygmpkk.codesearch.db.VectorDatabase;
 import com.ygmpkk.codesearch.embedding.EmbeddingModel;
 import org.apache.logging.log4j.LogManager;
@@ -17,7 +27,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -83,6 +96,7 @@ public class SemiBuildCommand implements Callable<Integer> {
             Path resolvedSource = (sourcePath != null ? sourcePath : Paths.get(".")).toAbsolutePath().normalize();
             Path indexDirectory = SemiCommandSupport.resolveIndexDirectory(appConfig, outputDir);
             Path vectorDbPath = SemiCommandSupport.resolveVectorDatabasePath(indexDirectory);
+            Path graphDbPath = SemiCommandSupport.resolveGraphDatabasePath(indexDirectory);
 
             logger.info("Building embedding index...");
             logger.info("Home directory: {}", resolvedHome);
@@ -90,6 +104,7 @@ public class SemiBuildCommand implements Callable<Integer> {
             logger.info("Source path: {}", resolvedSource);
             logger.info("Index directory: {}", indexDirectory);
             logger.info("Vector database path: {}", vectorDbPath);
+            logger.info("Graph database path: {}", graphDbPath);
             logger.info("Model: {}", embeddingParameters.model());
             logger.info("Model name: {}", embeddingParameters.modelName());
             logger.info("Embedding dimension: {}", embeddingParameters.embeddingDimension());
@@ -105,10 +120,16 @@ public class SemiBuildCommand implements Callable<Integer> {
                 logger.info("Extensions: {}", String.join(", ", extensions));
             }
 
-            Files.createDirectories(vectorDbPath);
+            TreeSitterCodeAnalyzer analyzer = new TreeSitterCodeAnalyzer();
+            TokenAwareChunker chunker = new TokenAwareChunker();
 
-            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString())) {
+            Files.createDirectories(vectorDbPath);
+            Files.createDirectories(graphDbPath);
+
+            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString());
+                 GraphDatabase graphDb = new ArcadeDBGraphDatabase(graphDbPath.toString())) {
                 vectorDb.initialize();
+                graphDb.initialize();
 
                 List<Path> filesToIndex = collectFiles(resolvedSource);
                 logger.info("Found {} files to index", filesToIndex.size());
@@ -123,33 +144,41 @@ public class SemiBuildCommand implements Callable<Integer> {
                             embeddingModel.getModelName(),
                             embeddingModel.getEmbeddingDimension());
 
-                    int batchSize = embeddingParameters.batchSize();
-                    logger.info("Processing files in batches of {}...", batchSize);
-                    int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
+                    int batchSize = Math.max(1, embeddingParameters.batchSize());
+                    int processedFiles = 0;
+                    int totalChunks = 0;
 
-                    for (int i = 0; i < filesToIndex.size(); i += batchSize) {
-                        int batchNum = (i / batchSize) + 1;
-                        int endIdx = Math.min(i + batchSize, filesToIndex.size());
-                        List<Path> batch = filesToIndex.subList(i, endIdx);
-
-                        logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
-
-                        for (Path file : batch) {
-                            try {
-                                String content = Files.readString(file);
-                                float[] embedding = embeddingModel.generateEmbedding(content);
-                                vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                logger.debug("Indexed: {}", file);
-                            } catch (Exception e) {
-                                logger.warn("Failed to index {}: {}", file, e.getMessage());
+                    for (Path file : filesToIndex) {
+                        processedFiles++;
+                        try {
+                            String content = Files.readString(file);
+                            Optional<FileAnalysisResult> analysis = analyzer.analyze(file, content);
+                            if (analysis.isEmpty()) {
+                                logger.debug("Skipping {} (unsupported language or parse failure)", file);
+                                continue;
                             }
+
+                            int chunksForFile = processFile(analysis.get(), chunker, embeddingModel, vectorDb, graphDb);
+                            totalChunks += chunksForFile;
+                            logger.debug("Processed {} chunk(s) for {}", chunksForFile, file);
+                        } catch (Exception e) {
+                            logger.warn("Failed to process {}: {}", file, e.getMessage());
+                            logger.debug("Stack trace:", e);
+                        }
+
+                        if (processedFiles % batchSize == 0) {
+                            logger.info("Processed {} / {} files ({} chunks so far)",
+                                    processedFiles, filesToIndex.size(), totalChunks);
                         }
                     }
 
-                    int embeddingCount = vectorDb.getEmbeddingCount();
                     logger.info("✓ Embedding index built successfully!");
                     logger.info("Index location: {}", indexDirectory);
-                    logger.info("Total embeddings stored: {}", embeddingCount);
+                    logger.info("Total embeddings stored: {}", vectorDb.getEmbeddingCount());
+                    logger.info("Graph nodes: {}", graphDb.getNodeCount());
+                    logger.info("Graph edges: {}", graphDb.getEdgeCount());
+                    logger.info("Files analyzed: {}", processedFiles);
+                    logger.info("Generated chunks: {}", totalChunks);
                 }
             }
         } catch (Exception e) {
@@ -159,6 +188,133 @@ public class SemiBuildCommand implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    private int processFile(FileAnalysisResult analysis,
+                            TokenAwareChunker chunker,
+                            EmbeddingModel embeddingModel,
+                            VectorDatabase vectorDb,
+                            GraphDatabase graphDb) throws Exception {
+        Path filePath = analysis.getFilePath();
+        String packageName = normalizePackageName(analysis.getPackageName());
+        String packageNodeId = packageNodeId(packageName);
+
+        graphDb.addNode(packageNodeId, "package", packageName, filePath.toString());
+
+        int chunkCount = 0;
+
+        for (ClassInfo classInfo : analysis.getClasses()) {
+            String classNodeId = classNodeId(packageName, classInfo.getName());
+            graphDb.addNode(classNodeId, "class", classInfo.getName(), filePath.toString());
+            graphDb.addEdge(packageNodeId, classNodeId, "contains");
+
+            Map<MethodInfo, String> methodNodeIds = new HashMap<>();
+            Map<String, String> methodNameIndex = new HashMap<>();
+
+            for (MethodInfo methodInfo : classInfo.getMethods()) {
+                String methodNodeId = methodNodeId(packageName, classInfo.getName(), methodInfo);
+                methodNodeIds.put(methodInfo, methodNodeId);
+                methodNameIndex.putIfAbsent(methodInfo.getName(), methodNodeId);
+                graphDb.addNode(methodNodeId, "method", methodInfo.getName(), filePath.toString());
+                graphDb.addEdge(classNodeId, methodNodeId, "contains");
+            }
+
+            for (Map.Entry<MethodInfo, String> entry : methodNodeIds.entrySet()) {
+                MethodInfo methodInfo = entry.getKey();
+                String methodNodeId = entry.getValue();
+
+                List<CodeChunk> chunks = chunker.chunkMethod(filePath, packageName, classInfo, methodInfo);
+                chunkCount += chunks.size();
+                for (CodeChunk chunk : chunks) {
+                    String text = chunk.toEmbeddingText();
+                    try {
+                        float[] embedding = embeddingModel.generateEmbedding(text);
+                        vectorDb.storeEmbedding(chunk.chunkId(), text, embedding);
+                    } catch (Exception e) {
+                        logger.warn("Failed to store chunk {}: {}", chunk.chunkId(), e.getMessage());
+                        logger.debug("Stack trace:", e);
+                    }
+                }
+
+                linkMethodCalls(graphDb, methodNodeId, packageName, classInfo, methodInfo, methodNameIndex);
+            }
+        }
+
+        return chunkCount;
+    }
+
+    private void linkMethodCalls(GraphDatabase graphDb,
+                                 String sourceNodeId,
+                                 String packageName,
+                                 ClassInfo classInfo,
+                                 MethodInfo methodInfo,
+                                 Map<String, String> methodNameIndex) throws Exception {
+        for (MethodCall call : methodInfo.getMethodCalls()) {
+            String targetId = resolveTargetMethod(packageName, classInfo, call, methodNameIndex);
+            if (targetId == null) {
+                String displayName = call.displayName();
+                targetId = externalMethodNodeId(displayName);
+                graphDb.addNode(targetId, "method_external", displayName, "(external)");
+            }
+            graphDb.addEdge(sourceNodeId, targetId, "calls");
+        }
+    }
+
+    private String resolveTargetMethod(String packageName,
+                                       ClassInfo classInfo,
+                                       MethodCall call,
+                                       Map<String, String> methodNameIndex) {
+        String qualifier = call.qualifier();
+        String methodName = call.name();
+
+        if (qualifier == null || qualifier.isBlank()
+                || "this".equals(qualifier)
+                || "super".equals(qualifier)
+                || qualifier.equals(classInfo.getName())) {
+            return methodNameIndex.get(methodName);
+        }
+
+        if (qualifier.contains(".")) {
+            String simpleQualifier = qualifier.substring(qualifier.lastIndexOf('.') + 1);
+            if (simpleQualifier.equals(classInfo.getName())) {
+                return methodNameIndex.get(methodName);
+            }
+        }
+
+        return null;
+    }
+
+    private static String packageNodeId(String packageName) {
+        return "package::" + sanitizeForId(packageName);
+    }
+
+    private static String classNodeId(String packageName, String className) {
+        return "class::" + sanitizeForId(packageName) + "::" + sanitizeForId(className);
+    }
+
+    private static String methodNodeId(String packageName, String className, MethodInfo methodInfo) {
+        String params = methodInfo.getParameters().stream()
+                .map(param -> sanitizeForId(param.type()))
+                .collect(java.util.stream.Collectors.joining(","));
+        return "method::" + sanitizeForId(packageName)
+                + "::" + sanitizeForId(className)
+                + "::" + sanitizeForId(methodInfo.getName())
+                + "(" + params + ")";
+    }
+
+    private static String externalMethodNodeId(String displayName) {
+        return "external::" + sanitizeForId(displayName);
+    }
+
+    private static String sanitizeForId(String value) {
+        if (value == null || value.isBlank()) {
+            return "default";
+        }
+        return value.replaceAll("[^A-Za-z0-9_.#/]+", "_");
+    }
+
+    private static String normalizePackageName(String packageName) {
+        return (packageName == null || packageName.isBlank()) ? "(default)" : packageName;
     }
 
     private List<Path> collectFiles(Path sourcePath) throws IOException {

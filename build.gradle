@@ -37,6 +37,14 @@ dependencies {
     // YAML configuration support
     implementation 'org.yaml:snakeyaml:2.2'
 
+    // Tree-sitter for syntax analysis and call graph extraction
+    implementation 'org.bytedeco:treesitter:0.22.5-1.5.10'
+    implementation 'org.bytedeco:treesitter-java:0.22.5-1.5.10'
+    implementation 'org.bytedeco:treesitter-java-platform:0.22.5-1.5.10'
+
+    // Token counting utilities for chunking
+    implementation 'com.knuddels:jtokkit:1.1.0'
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
 }

@@ -70,8 +70,11 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi build
 
 The build command will:
 - Scan your codebase for code files
-- Generate embeddings for each file using the specified embedding model
-- Store embeddings in an ArcadeDB database at `~/.code-semi-graph/index/arcadedb-vector` by default
+- Parse source files with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) to extract packages, classes, fields, methods, and method invocations
+- Generate a method-level call graph and persist it to the ArcadeDB graph database at `~/.code-semi-graph/index/arcadedb-graph`
+- Split method bodies into chunks that fit within a 32K token window (CL100K tokenizer) while enriching them with metadata (file, package, class, fields, method, calls)
+- Generate embeddings for each chunk using the specified embedding model
+- Store chunk embeddings in the ArcadeDB vector database at `~/.code-semi-graph/index/arcadedb-vector` by default
 
 Available options:
 - `-p, --path <path>`: Path to build the index from (default: current directory)
