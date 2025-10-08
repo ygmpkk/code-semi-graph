@@ -38,9 +38,8 @@ dependencies {
     implementation 'org.yaml:snakeyaml:2.2'
 
     // Tree-sitter for syntax analysis and call graph extraction
-    implementation 'org.bytedeco:treesitter:0.22.5-1.5.10'
-    implementation 'org.bytedeco:treesitter-java:0.22.5-1.5.10'
-    implementation 'org.bytedeco:treesitter-java-platform:0.22.5-1.5.10'
+    implementation 'io.github.tree-sitter:jtreesitter:0.25.6'
+    implementation 'com.itsaky.androidide.treesitter:tree-sitter-java:4.3.1'
 
     // Token counting utilities for chunking
     implementation 'com.knuddels:jtokkit:1.1.0'

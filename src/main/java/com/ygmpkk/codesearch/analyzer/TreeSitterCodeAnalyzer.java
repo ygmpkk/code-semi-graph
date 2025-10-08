@@ -1,14 +1,14 @@
 package com.ygmpkk.codesearch.analyzer;
 
+import io.github.tree_sitter.jtreesitter.Language;
+import io.github.tree_sitter.jtreesitter.Node;
+import io.github.tree_sitter.jtreesitter.Parser;
+import io.github.tree_sitter.jtreesitter.Tree;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.bytedeco.javacpp.BytePointer;
-import org.bytedeco.treesitter.Language;
-import org.bytedeco.treesitter.Node;
-import org.bytedeco.treesitter.Parser;
-import org.bytedeco.treesitter.Tree;
-import org.bytedeco.treesitter.java.TreesitterJavaLibrary;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -23,6 +23,7 @@ import java.util.Set;
  */
 public class TreeSitterCodeAnalyzer {
     private static final Logger logger = LogManager.getLogger(TreeSitterCodeAnalyzer.class);
+    private static final Method NODE_IS_NULL_METHOD = resolveIsNullMethod();
 
     public Optional<FileAnalysisResult> analyze(Path filePath, String content) {
         Objects.requireNonNull(filePath, "filePath");
@@ -36,40 +37,138 @@ public class TreeSitterCodeAnalyzer {
 
         byte[] sourceBytes = content.getBytes(StandardCharsets.UTF_8);
 
-        try (Parser parser = new Parser()) {
-            parser.setLanguage(language.language());
-            try (BytePointer pointer = new BytePointer(sourceBytes);
-                 Tree tree = parser.parseString(null, pointer)) {
-                if (tree == null || tree.isNull()) {
-                    logger.warn("tree-sitter returned null tree for file: {}", filePath);
-                    return Optional.empty();
-                }
+        Language resolvedLanguage;
+        try {
+            resolvedLanguage = language.language();
+        } catch (IllegalStateException e) {
+            logger.warn("Failed to load tree-sitter language for {}: {}", filePath, e.getMessage());
+            logger.debug("Language loading error", e);
+            return Optional.empty();
+        }
 
-                Node root = tree.getRootNode();
-                String packageName = null;
-                List<ClassInfo> classes = new ArrayList<>();
-
-                int namedChildCount = root.getNamedChildCount();
-                for (int i = 0; i < namedChildCount; i++) {
-                    Node child = root.getNamedChild(i);
-                    if (child == null || child.isNull()) {
-                        continue;
-                    }
-                    String type = child.getType();
-                    if ("package_declaration".equals(type)) {
-                        Node nameNode = child.getChildByFieldName("name");
-                        packageName = slice(nameNode, sourceBytes);
-                    } else if (language.isClassLike(type)) {
-                        classes.add(parseClass(language, child, sourceBytes));
-                    }
-                }
-
-                return Optional.of(new FileAnalysisResult(filePath, language.id(), packageName, classes));
+        Parser parser = null;
+        Tree tree = null;
+        try {
+            parser = new Parser();
+            parser.setLanguage(resolvedLanguage);
+            tree = parseTree(parser, content, sourceBytes);
+            if (tree == null) {
+                logger.warn("tree-sitter returned null tree for file: {}", filePath);
+                return Optional.empty();
             }
+
+            Node root = tree.getRootNode();
+            String packageName = null;
+            List<ClassInfo> classes = new ArrayList<>();
+
+            int namedChildCount = root.getNamedChildCount();
+            for (int i = 0; i < namedChildCount; i++) {
+                Node child = root.getNamedChild(i);
+                if (isNull(child)) {
+                    continue;
+                }
+                String type = child.getType();
+                if ("package_declaration".equals(type)) {
+                    Node nameNode = child.getChildByFieldName("name");
+                    packageName = slice(nameNode, sourceBytes);
+                } else if (language.isClassLike(type)) {
+                    classes.add(parseClass(language, child, sourceBytes));
+                }
+            }
+
+            return Optional.of(new FileAnalysisResult(filePath, language.id(), packageName, classes));
         } catch (Exception e) {
             logger.warn("Failed to analyze {} with tree-sitter: {}", filePath, e.getMessage());
             logger.debug("Stack trace:", e);
             return Optional.empty();
+        } finally {
+            closeQuietly(tree);
+            closeQuietly(parser);
+        }
+    }
+
+    private static Method resolveIsNullMethod() {
+        try {
+            return Node.class.getMethod("isNull");
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
+    }
+
+    private boolean isNull(Node node) {
+        if (node == null) {
+            return true;
+        }
+        if (NODE_IS_NULL_METHOD == null) {
+            return false;
+        }
+        try {
+            Object result = NODE_IS_NULL_METHOD.invoke(node);
+            if (result instanceof Boolean bool) {
+                return bool;
+            }
+        } catch (IllegalAccessException | InvocationTargetException ignored) {
+            // ignore and fall through to treat the node as non-null
+        }
+        return false;
+    }
+
+    private Tree parseTree(Parser parser, String content, byte[] sourceBytes) {
+        List<Throwable> errors = new ArrayList<>();
+
+        Tree tree = tryParse(parser, "parse", new Class<?>[]{byte[].class}, new Object[]{sourceBytes}, errors);
+        if (tree != null) {
+            return tree;
+        }
+
+        tree = tryParse(parser, "parseBytes", new Class<?>[]{byte[].class}, new Object[]{sourceBytes}, errors);
+        if (tree != null) {
+            return tree;
+        }
+
+        tree = tryParse(parser, "parseString", new Class<?>[]{String.class}, new Object[]{content}, errors);
+        if (tree != null) {
+            return tree;
+        }
+
+        IllegalStateException failure = new IllegalStateException("No compatible parse method found on tree-sitter Parser");
+        for (Throwable error : errors) {
+            failure.addSuppressed(error);
+        }
+        throw failure;
+    }
+
+    private Tree tryParse(Parser parser,
+                          String methodName,
+                          Class<?>[] parameterTypes,
+                          Object[] arguments,
+                          List<Throwable> errors) {
+        try {
+            Method method = Parser.class.getMethod(methodName, parameterTypes);
+            Object result = method.invoke(parser, arguments);
+            if (result instanceof Tree tree) {
+                return tree;
+            }
+            if (result != null) {
+                errors.add(new IllegalStateException("Unexpected return type from Parser." + methodName));
+            }
+        } catch (NoSuchMethodException ignored) {
+            // method does not exist on this Parser implementation, try next option
+        } catch (IllegalAccessException e) {
+            errors.add(e);
+        } catch (InvocationTargetException e) {
+            errors.add(e.getTargetException());
+        }
+        return null;
+    }
+
+    private void closeQuietly(Object closable) {
+        if (closable instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                logger.debug("Failed to close tree-sitter resource", e);
+            }
         }
     }
 
@@ -80,11 +179,11 @@ public class TreeSitterCodeAnalyzer {
         List<String> fields = new ArrayList<>();
         List<MethodInfo> methods = new ArrayList<>();
 
-        if (bodyNode != null && !bodyNode.isNull()) {
+        if (!isNull(bodyNode)) {
             int bodyChildren = bodyNode.getNamedChildCount();
             for (int i = 0; i < bodyChildren; i++) {
                 Node member = bodyNode.getNamedChild(i);
-                if (member == null || member.isNull()) {
+                if (isNull(member)) {
                     continue;
                 }
                 String type = member.getType();
@@ -104,7 +203,7 @@ public class TreeSitterCodeAnalyzer {
         int childCount = fieldNode.getNamedChildCount();
         for (int i = 0; i < childCount; i++) {
             Node child = fieldNode.getNamedChild(i);
-            if (child == null || child.isNull()) {
+            if (isNull(child)) {
                 continue;
             }
             if ("variable_declarator".equals(child.getType())) {
@@ -126,7 +225,7 @@ public class TreeSitterCodeAnalyzer {
 
         List<String> modifiers = new ArrayList<>();
         Node modifiersNode = methodNode.getChildByFieldName("modifiers");
-        if (modifiersNode != null && !modifiersNode.isNull()) {
+        if (!isNull(modifiersNode)) {
             int count = modifiersNode.getNamedChildCount();
             for (int i = 0; i < count; i++) {
                 Node modifier = modifiersNode.getNamedChild(i);
@@ -139,11 +238,11 @@ public class TreeSitterCodeAnalyzer {
 
         List<MethodParameter> parameters = new ArrayList<>();
         Node parametersNode = methodNode.getChildByFieldName("parameters");
-        if (parametersNode != null && !parametersNode.isNull()) {
+        if (!isNull(parametersNode)) {
             int paramCount = parametersNode.getNamedChildCount();
             for (int i = 0; i < paramCount; i++) {
                 Node param = parametersNode.getNamedChild(i);
-                if (param == null || param.isNull()) {
+                if (isNull(param)) {
                     continue;
                 }
                 if (!"formal_parameter".equals(param.getType()) && !"receiver_parameter".equals(param.getType())) {
@@ -177,7 +276,7 @@ public class TreeSitterCodeAnalyzer {
     }
 
     private void collectMethodCalls(Node node, byte[] sourceBytes, List<MethodCall> calls) {
-        if (node == null || node.isNull()) {
+        if (isNull(node)) {
             return;
         }
         if ("method_invocation".equals(node.getType())) {
@@ -197,7 +296,7 @@ public class TreeSitterCodeAnalyzer {
     }
 
     private String slice(Node node, byte[] sourceBytes) {
-        if (node == null || node.isNull()) {
+        if (isNull(node)) {
             return null;
         }
         int start = (int) node.getStartByte();
@@ -209,26 +308,27 @@ public class TreeSitterCodeAnalyzer {
     }
 
     private enum LanguageSupport {
-        JAVA("java", TreesitterJavaLibrary.ts_language_java(), Set.of(".java"),
+        JAVA("java", TreeSitterLanguageLoader::loadJavaLanguage, Set.of(".java"),
                 Set.of("class_declaration", "interface_declaration", "enum_declaration"),
                 Set.of("field_declaration"),
                 Set.of("method_declaration", "constructor_declaration"));
 
         private final String id;
-        private final Language language;
+        private final CheckedSupplier<Language> languageSupplier;
         private final Set<String> extensions;
         private final Set<String> classNodeTypes;
         private final Set<String> fieldNodeTypes;
         private final Set<String> methodNodeTypes;
+        private volatile Language resolvedLanguage;
 
         LanguageSupport(String id,
-                        Language language,
+                        CheckedSupplier<Language> languageSupplier,
                         Set<String> extensions,
                         Set<String> classNodeTypes,
                         Set<String> fieldNodeTypes,
                         Set<String> methodNodeTypes) {
             this.id = id;
-            this.language = language;
+            this.languageSupplier = languageSupplier;
             this.extensions = Set.copyOf(extensions);
             this.classNodeTypes = Set.copyOf(classNodeTypes);
             this.fieldNodeTypes = Set.copyOf(fieldNodeTypes);
@@ -236,7 +336,23 @@ public class TreeSitterCodeAnalyzer {
         }
 
         public Language language() {
-            return language;
+            Language cached = resolvedLanguage;
+            if (cached != null) {
+                return cached;
+            }
+            synchronized (this) {
+                cached = resolvedLanguage;
+                if (cached != null) {
+                    return cached;
+                }
+                try {
+                    cached = languageSupplier.get();
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to load language '" + id + "'", e);
+                }
+                resolvedLanguage = cached;
+                return cached;
+            }
         }
 
         public String id() {
@@ -266,5 +382,137 @@ public class TreeSitterCodeAnalyzer {
             }
             return null;
         }
+    }
+
+    private static final class TreeSitterLanguageLoader {
+        private TreeSitterLanguageLoader() {
+        }
+
+        private static Language loadJavaLanguage() throws Exception {
+            List<Throwable> errors = new ArrayList<>();
+
+            Language language = tryAndroidIdeLanguage(errors);
+            if (language != null) {
+                return language;
+            }
+
+            language = tryDirectLoad(errors);
+            if (language != null) {
+                return language;
+            }
+
+            IllegalStateException failure = new IllegalStateException("Unable to load tree-sitter Java language");
+            for (Throwable error : errors) {
+                failure.addSuppressed(error);
+            }
+            throw failure;
+        }
+
+        private static Language tryAndroidIdeLanguage(List<Throwable> errors) {
+            List<String> classNames = List.of(
+                    "com.itsaky.androidide.treesitter.languages.java.JavaLanguage",
+                    "com.itsaky.androidide.treesitter.java.JavaLanguage"
+            );
+
+            for (String className : classNames) {
+                try {
+                    Class<?> clazz = Class.forName(className);
+
+                    Language language = tryLanguageFromClass(clazz);
+                    if (language != null) {
+                        return language;
+                    }
+                } catch (ClassNotFoundException notFound) {
+                    // Ignore, try the next candidate
+                } catch (ReflectiveOperationException e) {
+                    errors.add(e);
+                }
+            }
+            return null;
+        }
+
+        private static Language tryLanguageFromClass(Class<?> clazz)
+                throws ReflectiveOperationException {
+            for (String methodName : List.of("getInstance", "instance", "getLanguage")) {
+                try {
+                    Method method = clazz.getMethod(methodName);
+                    Object result = method.invoke(null);
+                    Language language = coerceLanguage(result);
+                    if (language != null) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // try next accessor
+                }
+            }
+
+            Object instance = clazz.getDeclaredConstructor().newInstance();
+            Language language = coerceLanguage(instance);
+            if (language != null) {
+                return language;
+            }
+
+            for (String methodName : List.of("getLanguage", "language")) {
+                try {
+                    Method method = clazz.getMethod(methodName);
+                    Object result = method.invoke(instance);
+                    language = coerceLanguage(result);
+                    if (language != null) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // continue
+                }
+            }
+
+            return null;
+        }
+
+        private static Language tryDirectLoad(List<Throwable> errors) {
+            try {
+                Method load = Language.class.getMethod("load", String.class, String.class);
+                Object result = load.invoke(null, "tree-sitter-java", "tree_sitter_java");
+                if (result instanceof Language language) {
+                    return language;
+                }
+            } catch (NoSuchMethodException ignored) {
+                // ignore; not supported in this version of the library
+            } catch (IllegalAccessException e) {
+                errors.add(e);
+            } catch (InvocationTargetException e) {
+                errors.add(e.getTargetException());
+            }
+            return null;
+        }
+
+        private static Language coerceLanguage(Object candidate)
+                throws ReflectiveOperationException {
+            if (candidate == null) {
+                return null;
+            }
+            if (candidate instanceof Language language) {
+                return language;
+            }
+
+            Class<?> type = candidate.getClass();
+            for (String accessor : List.of("getLanguage", "language")) {
+                try {
+                    Method method = type.getMethod(accessor);
+                    Object result = method.invoke(candidate);
+                    if (result instanceof Language language) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // continue to the next accessor
+                }
+            }
+
+            return null;
+        }
+    }
+
+    @FunctionalInterface
+    private interface CheckedSupplier<T> {
+        T get() throws Exception;
     }
 }
