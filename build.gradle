@@ -21,6 +21,9 @@ dependencies {
     // SQLite for database storage
     implementation 'org.xerial:sqlite-jdbc:3.47.2.0'
     
+    // ArcadeDB for multi-model database (graph + vector)
+    implementation 'com.arcadedb:arcadedb-engine:24.11.1'
+    
     // Gson for JSON serialization
     implementation 'com.google.code.gson:gson:2.11.0'
 
