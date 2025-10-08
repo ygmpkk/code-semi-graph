@@ -5,12 +5,15 @@ A command line for semi or graph code search
 
 - **Semi Code Search**: Perform semi-structured code search with customizable options
   - **Build Index**: Build embedding index using Transformer models (Qwen3-Embedding-0.6B)
-  - **SQLite Vector Database**: Store code embeddings in SQLite for efficient similarity search
+  - **Vector Database**: Store code embeddings for efficient similarity search (SQLite or ArcadeDB)
   - **Search**: Search code using the built index with cosine similarity
 - **Graph Code Search**: Perform graph-based code search with traversal capabilities
-  - **SQLite Graph Database**: Store code relationships (classes, methods, inheritance, calls) in SQLite
+  - **Graph Database**: Store code relationships (classes, methods, inheritance, calls) (SQLite or ArcadeDB)
   - **Graph Traversal**: BFS and DFS traversal with relationship filtering
   - **Relationship Types**: Support for extends, implements, contains, calls, uses relationships
+- **Multi-Model Database Support**: Choose between SQLite and ArcadeDB for storage
+  - **SQLite**: Lightweight, file-based database (default)
+  - **ArcadeDB**: Multi-model database with native graph and vector support
 - Built with [picocli](https://picocli.info/) for a robust CLI experience
 - Java 21+ compatible
 - Gradle build system
@@ -149,33 +152,65 @@ Run the test suite:
 
 ## Database Architecture
 
-The application uses SQLite for both vector and graph database storage:
+The application supports two database backends for both vector and graph storage:
+
+### Database Backends
+
+#### SQLite (Default)
+- **Vector Database Location**: `./.code-index/embeddings.db`
+- **Graph Database Location**: `./.code-index/graph.db`
+- **Pros**: Lightweight, single-file, no separate server needed
+- **Cons**: Limited performance for large datasets
+
+#### ArcadeDB
+- **Database Location**: `./.code-index/arcadedb-vector` and `./.code-index/arcadedb-graph`
+- **Pros**: Native graph support, better performance, multi-model (document, graph, vector)
+- **Cons**: Slightly larger footprint
 
 ### Vector Database
-- **Location**: `./.code-index/embeddings.db`
 - **Purpose**: Store code embeddings for semantic search
-- **Schema**:
+- **SQLite Schema**:
   - `embeddings` table: Stores file paths, content, and embedding vectors (JSON)
   - Indexed on `file_path` for fast lookups
+- **ArcadeDB Schema**:
+  - `Embedding` document type: Stores file paths, content, and embedding arrays
+  - Indexed on `filePath` (unique) for fast lookups
 - **Search**: Uses cosine similarity to find similar code
 
 ### Graph Database
-- **Location**: `./.code-index/graph.db`
 - **Purpose**: Store code relationships and enable graph traversal
-- **Schema**:
+- **SQLite Schema**:
   - `nodes` table: Stores code entities (classes, methods, functions)
   - `edges` table: Stores relationships between nodes
   - Indexed on node names, types, and relationship types
+- **ArcadeDB Schema**:
+  - `CodeNode` vertex type: Stores code entities with properties
+  - Edge types created dynamically for relationships (extends, calls, etc.)
+  - Native graph traversal with built-in BFS/DFS support
 - **Traversal**: Supports BFS and DFS with relationship filtering
+
+### Using Different Database Backends
+
+To use ArcadeDB implementations in your code:
+
+```java
+// Vector database with ArcadeDB
+VectorDatabase vectorDb = new ArcadeDBVectorDatabase("./.code-index/arcadedb-vector");
+vectorDb.initialize();
+
+// Graph database with ArcadeDB
+GraphDatabase graphDb = new ArcadeDBGraphDatabase("./.code-index/arcadedb-graph");
+graphDb.initialize();
+```
 
 ### Database Operations
 
-View vector database contents:
+View SQLite vector database contents:
 ```bash
 sqlite3 ./.code-index/embeddings.db "SELECT file_path, length(embedding) FROM embeddings;"
 ```
 
-View graph database contents:
+View SQLite graph database contents:
 ```bash
 sqlite3 ./.code-index/graph.db "SELECT * FROM nodes;"
 sqlite3 ./.code-index/graph.db "SELECT * FROM edges;"
@@ -185,7 +220,9 @@ sqlite3 ./.code-index/graph.db "SELECT * FROM edges;"
 
 - Java 21 or higher
 - Gradle 8.14 or higher (included via Gradle wrapper)
-- SQLite (included via JDBC driver)
+- Database drivers (included via dependencies):
+  - SQLite JDBC driver for SQLite support
+  - ArcadeDB engine for ArcadeDB support
 
 ## Development
 
@@ -200,10 +237,12 @@ src/
 │           ├── SemiBuildCommand.java      # Semi build index command
 │           ├── GraphSearchCommand.java    # Graph search command
 │           └── db/
-│               ├── VectorDatabase.java         # Vector DB interface
-│               ├── SqliteVectorDatabase.java   # SQLite vector implementation
-│               ├── GraphDatabase.java          # Graph DB interface
-│               └── SqliteGraphDatabase.java    # SQLite graph implementation
+│               ├── VectorDatabase.java              # Vector DB interface
+│               ├── SqliteVectorDatabase.java        # SQLite vector implementation
+│               ├── ArcadeDBVectorDatabase.java      # ArcadeDB vector implementation
+│               ├── GraphDatabase.java               # Graph DB interface
+│               ├── SqliteGraphDatabase.java         # SQLite graph implementation
+│               └── ArcadeDBGraphDatabase.java       # ArcadeDB graph implementation
 └── test/
     └── java/
         └── com/ygmpkk/codesearch/
