@@ -1,9 +1,9 @@
 package com.ygmpkk.codesearch.analyzer;
 
-import io.github.tree_sitter.jtreesitter.Language;
-import io.github.tree_sitter.jtreesitter.Node;
-import io.github.tree_sitter.jtreesitter.Parser;
-import io.github.tree_sitter.jtreesitter.Tree;
+import io.github.tree_sitter.ktreesitter.Language;
+import io.github.tree_sitter.ktreesitter.Node;
+import io.github.tree_sitter.ktreesitter.Parser;
+import io.github.tree_sitter.ktreesitter.Tree;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
