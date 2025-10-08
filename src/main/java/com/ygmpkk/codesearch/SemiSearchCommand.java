@@ -54,6 +54,28 @@ public class SemiSearchCommand implements Callable<Integer> {
     private Path indexDirectory;
 
     @Option(
+        names = {"-p", "--path"},
+        description = "Legacy option: path to search (deprecated, kept for compatibility)",
+        paramLabel = "PATH"
+    )
+    private String path;
+
+    @Option(
+        names = {"-d", "--depth"},
+        description = "Legacy option: maximum search depth (deprecated)",
+        paramLabel = "DEPTH"
+    )
+    private Integer maxDepth;
+
+    @Option(
+        names = {"-e", "--extensions"},
+        description = "Legacy option: comma-separated file extensions (deprecated)",
+        paramLabel = "EXTENSIONS",
+        split = ","
+    )
+    private String[] extensions;
+
+    @Option(
         names = {"-l", "--limit"},
         description = "Maximum number of results to return",
         paramLabel = "N"
@@ -110,6 +132,16 @@ public class SemiSearchCommand implements Callable<Integer> {
                 logger.info("Model path: {}", embeddingParameters.modelPath());
             }
             logger.info("Result limit: {}", limit);
+
+            if (path != null && !path.isBlank()) {
+                logger.info("(legacy) Search path option provided: {}", path);
+            }
+            if (maxDepth != null) {
+                logger.info("(legacy) Max depth option provided: {}", maxDepth);
+            }
+            if (extensions != null && extensions.length > 0) {
+                logger.info("(legacy) Extensions filter provided: {}", String.join(", ", extensions));
+            }
 
             try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString());
                  EmbeddingModel embeddingModel = SemiCommandSupport.createEmbeddingModel(embeddingParameters)) {
