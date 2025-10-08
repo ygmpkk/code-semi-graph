@@ -1,5 +1,7 @@
 package com.ygmpkk.codesearch.embedding;
 
+import ai.djl.ModelException;
+import ai.djl.engine.Engine;
 import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
 import ai.djl.huggingface.translator.TextEmbeddingTranslator;
 import ai.djl.inference.Predictor;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -93,19 +96,11 @@ public class DjlEmbeddingModel extends EmbeddingModel {
 
             TextEmbeddingTranslator translator = translatorBuilder.build();
 
-            Criteria<String, float[]> criteria = Criteria.builder()
-                    .setTypes(String.class, float[].class)
-                    .optModelPath(modelDirectory)
-                    .optModelName(modelName)
-                    .optTranslator(translator)
-                    .optEngine("PyTorch")
-                    .optOption("mapLocation", "true")
-                    .build();
-
-            model = criteria.loadModel();
+            String preferredEngine = resolvePreferredEngine();
+            model = loadModelWithFallback(translator, preferredEngine);
             predictor = model.newPredictor();
-
-            logger.info("DJL embedding model initialized successfully with dimension {}", embeddingDimension);
+            Engine engine = model.getNDManager().getEngine();
+            logger.info("DJL embedding model initialized successfully with engine '{}' and dimension {}", engine.getEngineName(), embeddingDimension);
         } catch (Exception e) {
             logger.error("Failed to initialize DJL embedding model: {}", e.getMessage(), e);
             closeQuietly();
@@ -174,6 +169,93 @@ public class DjlEmbeddingModel extends EmbeddingModel {
                 tokenizer = null;
             }
         }
+    }
+
+    private Criteria<String, float[]> buildCriteria(TextEmbeddingTranslator translator, String engineName) {
+        Criteria.Builder<String, float[]> builder = Criteria.builder()
+                .setTypes(String.class, float[].class)
+                .optModelPath(modelDirectory)
+                .optModelName(modelName)
+                .optTranslator(translator);
+
+        if (engineName != null && !engineName.isBlank()) {
+            builder.optEngine(engineName);
+            if ("pytorch".equalsIgnoreCase(engineName)) {
+                builder.optOption("mapLocation", "true");
+            }
+        }
+
+        return builder.build();
+    }
+
+    private ZooModel<String, float[]> loadModelWithFallback(TextEmbeddingTranslator translator, String preferredEngine)
+            throws IOException, ModelException {
+        Exception preferredEngineFailure = null;
+
+        if (preferredEngine != null && !preferredEngine.isBlank()) {
+            try {
+                logger.info("Attempting to load DJL model using configured engine '{}'", preferredEngine);
+                return buildCriteria(translator, preferredEngine).loadModel();
+            } catch (ModelException | IOException e) {
+                if (isUnsupportedEngineError(e)) {
+                    logger.warn("Engine '{}' is unavailable for model '{}': {}. Falling back to default engine.",
+                            preferredEngine, modelName, e.getMessage());
+                    preferredEngineFailure = e;
+                } else {
+                    throw e;
+                }
+            }
+        }
+
+        logger.info("Loading DJL model using default engine resolution");
+        try {
+            return buildCriteria(translator, null).loadModel();
+        } catch (ModelException | IOException e) {
+            if (preferredEngineFailure != null) {
+                e.addSuppressed(preferredEngineFailure);
+            }
+            throw e;
+        }
+    }
+
+    private boolean isUnsupportedEngineError(Throwable throwable) {
+        while (throwable != null) {
+            String message = throwable.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+                if (normalized.contains("doesn't support specified engine")
+                        || normalized.contains("no pytorch engine")
+                        || normalized.contains("engine pytorch is not available")
+                        || normalized.contains("no matching engine")) {
+                    return true;
+                }
+            }
+            throwable = throwable.getCause();
+        }
+        return false;
+    }
+
+    static String resolvePreferredEngine() {
+        return resolvePreferredEngine(
+                System.getProperty("codesearch.djl.engine"),
+                System.getenv("CODESEARCH_DJL_ENGINE"));
+    }
+
+    static String resolvePreferredEngine(String propertyValue, String environmentValue) {
+        String candidate = normalizeEngineValue(propertyValue);
+        if (candidate != null) {
+            return candidate;
+        }
+        return normalizeEngineValue(environmentValue);
+    }
+
+    private static String normalizeEngineValue(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**

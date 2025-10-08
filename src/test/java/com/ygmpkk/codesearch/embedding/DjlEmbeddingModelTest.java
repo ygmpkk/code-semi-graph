@@ -60,4 +60,19 @@ class DjlEmbeddingModelTest {
 
         assertTrue(DjlEmbeddingModel.HuggingFaceSupport.shouldIncludeTokenTypes(tempDir));
     }
+
+    @Test
+    void resolvePreferredEnginePrefersSystemProperty() {
+        assertEquals("TensorFlow", DjlEmbeddingModel.resolvePreferredEngine("TensorFlow", "OnnxRuntime"));
+    }
+
+    @Test
+    void resolvePreferredEngineFallsBackToEnvironment() {
+        assertEquals("OnnxRuntime", DjlEmbeddingModel.resolvePreferredEngine(null, " OnnxRuntime "));
+    }
+
+    @Test
+    void resolvePreferredEngineReturnsNullWhenValuesBlank() {
+        assertNull(DjlEmbeddingModel.resolvePreferredEngine("  ", ""));
+    }
 }
