@@ -1,9 +1,9 @@
 package com.ygmpkk.codesearch.analyzer;
 
-import io.github.tree_sitter.ktreesitter.Language;
-import io.github.tree_sitter.ktreesitter.Node;
-import io.github.tree_sitter.ktreesitter.Parser;
-import io.github.tree_sitter.ktreesitter.Tree;
+import ch.usi.si.seart.treesitter.Language;
+import ch.usi.si.seart.treesitter.Node;
+import ch.usi.si.seart.treesitter.Parser;
+import ch.usi.si.seart.treesitter.Tree;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -391,7 +391,7 @@ public class TreeSitterCodeAnalyzer {
         private static Language loadJavaLanguage() throws Exception {
             List<Throwable> errors = new ArrayList<>();
 
-            Language language = tryAndroidIdeLanguage(errors);
+            Language language = tryLanguageRegistry(errors);
             if (language != null) {
                 return language;
             }
@@ -408,32 +408,46 @@ public class TreeSitterCodeAnalyzer {
             throw failure;
         }
 
-        private static Language tryAndroidIdeLanguage(List<Throwable> errors) {
+        private static Language tryLanguageRegistry(List<Throwable> errors) {
             List<String> classNames = List.of(
-                    "com.itsaky.androidide.treesitter.languages.java.JavaLanguage",
-                    "com.itsaky.androidide.treesitter.java.JavaLanguage"
+                    "ch.usi.si.seart.treesitter.Languages",
+                    "ch.usi.si.seart.treesitter.languages.Languages",
+                    "ch.usi.si.seart.treesitter.LanguageLibrary"
             );
 
             for (String className : classNames) {
                 try {
                     Class<?> clazz = Class.forName(className);
 
-                    Language language = tryLanguageFromClass(clazz);
+                    Language language = tryLanguageFromRegistryClass(clazz);
                     if (language != null) {
                         return language;
                     }
                 } catch (ClassNotFoundException notFound) {
-                    // Ignore, try the next candidate
+                    // Ignore and continue to the next registry candidate
                 } catch (ReflectiveOperationException e) {
                     errors.add(e);
                 }
             }
+
             return null;
         }
 
-        private static Language tryLanguageFromClass(Class<?> clazz)
+        private static Language tryLanguageFromRegistryClass(Class<?> clazz)
                 throws ReflectiveOperationException {
-            for (String methodName : List.of("getInstance", "instance", "getLanguage")) {
+            for (String fieldName : List.of("JAVA", "JAVA_LANGUAGE", "JAVA_LANG")) {
+                try {
+                    Object value = clazz.getField(fieldName).get(null);
+                    Language language = coerceLanguage(value);
+                    if (language != null) {
+                        return language;
+                    }
+                } catch (NoSuchFieldException ignored) {
+                    // try next candidate
+                }
+            }
+
+            for (String methodName : List.of("java", "JAVA", "getJava", "loadJava", "javaLanguage")) {
                 try {
                     Method method = clazz.getMethod(methodName);
                     Object result = method.invoke(null);
@@ -446,19 +460,45 @@ public class TreeSitterCodeAnalyzer {
                 }
             }
 
+            for (String methodName : List.of("language", "getLanguage", "load")) {
+                try {
+                    Method method = clazz.getMethod(methodName, String.class);
+                    Object result = method.invoke(null, "java");
+                    Language language = coerceLanguage(result);
+                    if (language != null) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // continue
+                }
+            }
+
             Object instance = clazz.getDeclaredConstructor().newInstance();
             Language language = coerceLanguage(instance);
             if (language != null) {
                 return language;
             }
 
-            for (String methodName : List.of("getLanguage", "language")) {
+            for (String methodName : List.of("java", "JAVA", "getJava", "loadJava", "javaLanguage")) {
                 try {
                     Method method = clazz.getMethod(methodName);
                     Object result = method.invoke(instance);
                     language = coerceLanguage(result);
                     if (language != null) {
                         return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // continue
+                }
+            }
+
+            for (String methodName : List.of("language", "getLanguage", "load")) {
+                try {
+                    Method method = clazz.getMethod(methodName, String.class);
+                    Object result = method.invoke(instance, "java");
+                    Language languageCandidate = coerceLanguage(result);
+                    if (languageCandidate != null) {
+                        return languageCandidate;
                     }
                 } catch (NoSuchMethodException ignored) {
                     // continue
@@ -481,6 +521,52 @@ public class TreeSitterCodeAnalyzer {
                 errors.add(e);
             } catch (InvocationTargetException e) {
                 errors.add(e.getTargetException());
+            }
+
+            for (String methodName : List.of("load", "fromName", "forName")) {
+                try {
+                    Method method = Language.class.getMethod(methodName, String.class);
+                    Object result = method.invoke(null, "java");
+                    if (result instanceof Language language) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // try next option
+                } catch (IllegalAccessException e) {
+                    errors.add(e);
+                } catch (InvocationTargetException e) {
+                    errors.add(e.getTargetException());
+                }
+
+                try {
+                    Method method = Language.class.getMethod(methodName, String.class);
+                    Object result = method.invoke(null, "tree-sitter-java");
+                    if (result instanceof Language language) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // already handled above
+                } catch (IllegalAccessException e) {
+                    errors.add(e);
+                } catch (InvocationTargetException e) {
+                    errors.add(e.getTargetException());
+                }
+            }
+
+            for (String methodName : List.of("load", "fromName", "forName")) {
+                try {
+                    Method method = Language.class.getMethod(methodName, String.class, String.class);
+                    Object result = method.invoke(null, "tree-sitter-java", "tree_sitter_java");
+                    if (result instanceof Language language) {
+                        return language;
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // continue searching for overloads
+                } catch (IllegalAccessException e) {
+                    errors.add(e);
+                } catch (InvocationTargetException e) {
+                    errors.add(e.getTargetException());
+                }
             }
             return null;
         }
