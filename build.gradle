@@ -28,6 +28,7 @@ dependencies {
     runtimeOnly 'ai.djl.pytorch:pytorch-engine'
     runtimeOnly 'ai.djl.pytorch:pytorch-model-zoo'
     runtimeOnly 'ai.djl.pytorch:pytorch-native-cpu:2.7.1'
+    runtimeOnly 'ai.djl.pytorch:pytorch-jni:2.7.1-0.34.0'
 
     // HTTP client for remote API calls
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
