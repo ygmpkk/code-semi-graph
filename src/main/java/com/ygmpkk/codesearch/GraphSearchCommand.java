@@ -1,7 +1,7 @@
 package com.ygmpkk.codesearch;
 
+import com.ygmpkk.codesearch.db.ArcadeDBGraphDatabase;
 import com.ygmpkk.codesearch.db.GraphDatabase;
-import com.ygmpkk.codesearch.db.SqliteGraphDatabase;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -63,9 +63,9 @@ public class GraphSearchCommand implements Callable<Integer> {
     
     @Option(
         names = {"--db-path"},
-        description = "Path to graph database (default: ./.code-index/graph.db)"
+        description = "Path to graph database (default: ./.code-index/arcadedb-graph)"
     )
-    private String dbPath = "./.code-index/graph.db";
+    private String dbPath = "./.code-index/arcadedb-graph";
 
     @Override
     public Integer call() {
@@ -89,7 +89,7 @@ public class GraphSearchCommand implements Callable<Integer> {
             // Check if database exists, if not create sample data
             boolean dbExists = Files.exists(graphDbPath);
             
-            try (GraphDatabase graphDb = new SqliteGraphDatabase(dbPath)) {
+            try (GraphDatabase graphDb = new ArcadeDBGraphDatabase(dbPath)) {
                 if (!dbExists) {
                     logger.info("");
                     logger.info("Graph database not found. Creating with sample data...");

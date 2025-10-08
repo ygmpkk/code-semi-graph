@@ -1,6 +1,6 @@
 package com.ygmpkk.codesearch;
 
-import com.ygmpkk.codesearch.db.SqliteVectorDatabase;
+import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
 import com.ygmpkk.codesearch.db.VectorDatabase;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -92,11 +92,11 @@ public class SemiBuildCommand implements Callable<Integer> {
             Files.createDirectories(outputPath);
 
             // Initialize vector database
-            String dbPath = outputPath.resolve("embeddings.db").toString();
+            String dbPath = outputPath.resolve("arcadedb-vector").toString();
             logger.info("");
             logger.info("Initializing vector database: {}", dbPath);
             
-            try (VectorDatabase vectorDb = new SqliteVectorDatabase(dbPath)) {
+            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(dbPath)) {
                 vectorDb.initialize();
                 
                 // Collect files to index
