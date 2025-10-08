@@ -76,31 +76,42 @@ public class DjlEmbeddingModel extends EmbeddingModel {
                 throw new IOException("Model path does not exist: " + modelDirectory);
             }
 
-            Map<String, Object> translatorArguments = new HashMap<>(HuggingFaceSupport.loadTranslatorArguments(modelDirectory));
-            boolean includeTokenTypes = HuggingFaceSupport.shouldIncludeTokenTypes(modelDirectory);
+            // Patch qwen3 to qwen2 for compatibility with current DJL version
+            Path configPath = modelDirectory.resolve("config.json");
+            boolean configPatched = patchQwen3Config(configPath);
 
-            tokenizer = HuggingFaceTokenizer.builder()
-                    .optTokenizerPath(modelDirectory)
-                    .build();
+            try {
+                Map<String, Object> translatorArguments = new HashMap<>(HuggingFaceSupport.loadTranslatorArguments(modelDirectory));
+                boolean includeTokenTypes = HuggingFaceSupport.shouldIncludeTokenTypes(modelDirectory);
 
-            TextEmbeddingTranslator.Builder translatorBuilder;
-            if (translatorArguments.isEmpty()) {
-                translatorBuilder = TextEmbeddingTranslator.builder(tokenizer);
-            } else {
-                translatorBuilder = TextEmbeddingTranslator.builder(tokenizer, translatorArguments);
+                tokenizer = HuggingFaceTokenizer.builder()
+                        .optTokenizerPath(modelDirectory)
+                        .build();
+
+                TextEmbeddingTranslator.Builder translatorBuilder;
+                if (translatorArguments.isEmpty()) {
+                    translatorBuilder = TextEmbeddingTranslator.builder(tokenizer);
+                } else {
+                    translatorBuilder = TextEmbeddingTranslator.builder(tokenizer, translatorArguments);
+                }
+
+                if (includeTokenTypes && !translatorArguments.containsKey("includeTokenTypes")) {
+                    translatorBuilder.optIncludeTokenTypes(true);
+                }
+
+                TextEmbeddingTranslator translator = translatorBuilder.build();
+
+                String preferredEngine = resolvePreferredEngine();
+                model = loadModelWithFallback(translator, preferredEngine);
+                predictor = model.newPredictor();
+                Engine engine = model.getNDManager().getEngine();
+                logger.info("DJL embedding model initialized successfully with engine '{}' and dimension {}", engine.getEngineName(), embeddingDimension);
+            } finally {
+                // Restore original config if it was patched
+                if (configPatched) {
+                    restoreOriginalConfig(configPath);
+                }
             }
-
-            if (includeTokenTypes && !translatorArguments.containsKey("includeTokenTypes")) {
-                translatorBuilder.optIncludeTokenTypes(true);
-            }
-
-            TextEmbeddingTranslator translator = translatorBuilder.build();
-
-            String preferredEngine = resolvePreferredEngine();
-            model = loadModelWithFallback(translator, preferredEngine);
-            predictor = model.newPredictor();
-            Engine engine = model.getNDManager().getEngine();
-            logger.info("DJL embedding model initialized successfully with engine '{}' and dimension {}", engine.getEngineName(), embeddingDimension);
         } catch (Exception e) {
             logger.error("Failed to initialize DJL embedding model: {}", e.getMessage(), e);
             closeQuietly();
@@ -233,6 +244,86 @@ public class DjlEmbeddingModel extends EmbeddingModel {
             throwable = throwable.getCause();
         }
         return false;
+    }
+
+    /**
+     * Patches qwen3 model_type to qwen2 for compatibility with DJL 0.34.0.
+     * Qwen3 is architecturally similar to Qwen2, so this substitution works for embedding models.
+     * Also handles sliding_window field which can't be null in DJL.
+     *
+     * @param configPath Path to the config.json file
+     * @return true if the config was patched, false otherwise
+     */
+    private boolean patchQwen3Config(Path configPath) {
+        if (!Files.exists(configPath)) {
+            return false;
+        }
+
+        try {
+            String content = Files.readString(configPath);
+            JsonObject config = JsonParser.parseString(content).getAsJsonObject();
+
+            boolean needsPatch = false;
+
+            // Patch model_type from qwen3 to qwen2
+            if (config.has("model_type")) {
+                String modelType = config.get("model_type").getAsString();
+                if ("qwen3".equals(modelType)) {
+                    logger.info("Detected qwen3 model_type, patching to qwen2 for DJL compatibility");
+                    needsPatch = true;
+                }
+            }
+
+            // Check if sliding_window is null and needs patching
+            if (config.has("sliding_window") && config.get("sliding_window").isJsonNull()) {
+                logger.info("Detected null sliding_window, patching for DJL compatibility");
+                needsPatch = true;
+            }
+
+            if (needsPatch) {
+                // Backup original config
+                Path backupPath = configPath.resolveSibling("config.json.backup");
+                Files.copy(configPath, backupPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+                // Apply patches
+                if (config.has("model_type") && "qwen3".equals(config.get("model_type").getAsString())) {
+                    config.addProperty("model_type", "qwen2");
+                }
+
+                // Remove sliding_window field if it's null (DJL will use default)
+                if (config.has("sliding_window") && config.get("sliding_window").isJsonNull()) {
+                    config.remove("sliding_window");
+                }
+
+                // Write patched config
+                String patchedContent = new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(config);
+                Files.writeString(configPath, patchedContent);
+
+                logger.debug("Config patched successfully, backup saved to {}", backupPath);
+                return true;
+            }
+        } catch (IOException | JsonSyntaxException e) {
+            logger.warn("Failed to patch config.json: {}", e.getMessage());
+        }
+
+        return false;
+    }
+
+    /**
+     * Restores the original config.json from backup
+     *
+     * @param configPath Path to the config.json file
+     */
+    private void restoreOriginalConfig(Path configPath) {
+        Path backupPath = configPath.resolveSibling("config.json.backup");
+        if (Files.exists(backupPath)) {
+            try {
+                Files.move(backupPath, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                logger.debug("Original config restored from backup");
+            } catch (IOException e) {
+                logger.warn("Failed to restore original config from backup: {}", e.getMessage());
+            }
+        }
     }
 
     static String resolvePreferredEngine() {

@@ -75,4 +75,43 @@ class DjlEmbeddingModelTest {
     void resolvePreferredEngineReturnsNullWhenValuesBlank() {
         assertNull(DjlEmbeddingModel.resolvePreferredEngine("  ", ""));
     }
+
+    @Test
+    void patchQwen3ConfigToQwen2() throws Exception {
+        // Create a qwen3 config.json with null sliding_window
+        Path config = tempDir.resolve("config.json");
+        String qwen3Config = """
+                {
+                  "model_type": "qwen3",
+                  "hidden_size": 1024,
+                  "num_attention_heads": 16,
+                  "sliding_window": null
+                }
+                """;
+        Files.writeString(config, qwen3Config);
+
+        // Create a DjlEmbeddingModel instance
+        DjlEmbeddingModel model = new DjlEmbeddingModel("test-qwen3", tempDir.toString(), 1024);
+
+        // Try to initialize - this should patch the config
+        try {
+            model.initialize();
+        } catch (Exception e) {
+            // Expected to fail due to missing model files, but config should be patched
+            // and then restored
+        }
+
+        // Verify the config is restored to original qwen3 with null sliding_window
+        String restoredContent = Files.readString(config);
+        assertTrue(restoredContent.contains("\"model_type\": \"qwen3\"") ||
+                   restoredContent.contains("\"model_type\":\"qwen3\""),
+                "Config should be restored to qwen3 after initialization");
+        assertTrue(restoredContent.contains("\"sliding_window\": null") ||
+                   restoredContent.contains("\"sliding_window\":null"),
+                "Config should be restored with null sliding_window");
+
+        // Verify backup file was removed
+        Path backup = tempDir.resolve("config.json.backup");
+        assertFalse(Files.exists(backup), "Backup file should be cleaned up");
+    }
 }

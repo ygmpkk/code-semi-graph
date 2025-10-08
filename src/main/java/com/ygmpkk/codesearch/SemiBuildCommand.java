@@ -64,12 +64,24 @@ public class SemiBuildCommand implements Callable<Integer> {
             description = "Embedding model to use (default: mock). Can be 'mock', a model name like 'Qwen/Qwen3-Embedding-0.6B', or an HTTP URL"
     )
     private String model = "mock";
+
+    @Option(
+            names = {"--model-name"},
+            description = "Name of the embedding model (for display purposes, default: mock)"
+    )
+    private String modelName = "mock";
     
     @Option(
             names = {"--model-path"},
             description = "Path to local model files for DJL models"
     )
     private String modelPath;
+
+    @Option(
+            names = {"--embedding-dim"},
+            description = "Dimension of the embeddings (if known in advance)"
+    )
+    private Integer embeddingDimension;
     
     @Option(
             names = {"--api-key"},
@@ -89,6 +101,8 @@ public class SemiBuildCommand implements Callable<Integer> {
         logger.info("Source path: {}", path);
         logger.info("Output directory: {}", outputDir);
         logger.info("Model: {}", model);
+        logger.info("Model name: {}", modelName);
+        logger.info("Embedding dimension: {}", embeddingDimension);
         logger.info("Batch size: {}", batchSize);
 
         if (maxDepth != null) {
@@ -129,7 +143,7 @@ public class SemiBuildCommand implements Callable<Integer> {
                     logger.info("Model path: {}", modelPath);
                 }
                 
-                try (EmbeddingModel embeddingModel = EmbeddingModelFactory.createModel(model, modelPath, apiKey)) {
+                try (EmbeddingModel embeddingModel = EmbeddingModelFactory.createModel(model, modelName, embeddingDimension, modelPath, apiKey)) {
                     logger.info("Embedding model initialized: {} (dimension: {})", 
                             embeddingModel.getModelName(), 
                             embeddingModel.getEmbeddingDimension());
