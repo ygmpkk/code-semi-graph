@@ -2,6 +2,8 @@ package com.ygmpkk.codesearch;
 
 import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
 import com.ygmpkk.codesearch.db.VectorDatabase;
+import com.ygmpkk.codesearch.embedding.EmbeddingModel;
+import com.ygmpkk.codesearch.embedding.EmbeddingModelFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -15,7 +17,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -60,9 +61,21 @@ public class SemiBuildCommand implements Callable<Integer> {
 
     @Option(
             names = {"-m", "--model"},
-            description = "Embedding model to use (default: Qwen/Qwen3-Embedding-0.6B)"
+            description = "Embedding model to use (default: mock). Can be 'mock', a model name like 'Qwen/Qwen3-Embedding-0.6B', or an HTTP URL"
     )
-    private String model = "Qwen/Qwen3-Embedding-0.6B";
+    private String model = "mock";
+    
+    @Option(
+            names = {"--model-path"},
+            description = "Path to local model files for DJL models"
+    )
+    private String modelPath;
+    
+    @Option(
+            names = {"--api-key"},
+            description = "API key for HTTP-based embedding models"
+    )
+    private String apiKey;
 
     @Option(
             names = {"--batch-size"},
@@ -109,48 +122,54 @@ public class SemiBuildCommand implements Callable<Integer> {
                     return 0;
                 }
 
-                // TODO: Initialize embedding model (Qwen3-Embedding-0.6B)
-                // For now, we'll use mock embeddings
+                // Initialize embedding model using factory
                 logger.info("");
                 logger.info("Initializing embedding model: {}", model);
-                logger.info("Note: Using mock embeddings as placeholder implementation.");
-                logger.info("In production, this would load the actual model using DJL/Hugging Face.");
+                if (modelPath != null) {
+                    logger.info("Model path: {}", modelPath);
+                }
+                
+                try (EmbeddingModel embeddingModel = EmbeddingModelFactory.createModel(model, modelPath, apiKey)) {
+                    logger.info("Embedding model initialized: {} (dimension: {})", 
+                            embeddingModel.getModelName(), 
+                            embeddingModel.getEmbeddingDimension());
 
-                // Process files in batches
-                logger.info("");
-                logger.info("Processing files in batches of {}...", batchSize);
-                int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
+                    // Process files in batches
+                    logger.info("");
+                    logger.info("Processing files in batches of {}...", batchSize);
+                    int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
 
-                for (int i = 0; i < filesToIndex.size(); i += batchSize) {
-                    int batchNum = (i / batchSize) + 1;
-                    int endIdx = Math.min(i + batchSize, filesToIndex.size());
-                    List<Path> batch = filesToIndex.subList(i, endIdx);
+                    for (int i = 0; i < filesToIndex.size(); i += batchSize) {
+                        int batchNum = (i / batchSize) + 1;
+                        int endIdx = Math.min(i + batchSize, filesToIndex.size());
+                        List<Path> batch = filesToIndex.subList(i, endIdx);
 
-                    logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
+                        logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
 
-                    for (Path file : batch) {
-                        try {
-                            // Read file content
-                            String content = Files.readString(file);
-                            
-                            // Generate mock embedding (in production, use actual model)
-                            float[] embedding = generateMockEmbedding(content);
-                            
-                            // Store in database
-                            vectorDb.storeEmbedding(file.toString(), content, embedding);
-                            
-                            logger.debug("  - Indexed: {}", file);
-                        } catch (Exception e) {
-                            logger.warn("  - Failed to index {}: {}", file, e.getMessage());
+                        for (Path file : batch) {
+                            try {
+                                // Read file content
+                                String content = Files.readString(file);
+                                
+                                // Generate embedding using the model
+                                float[] embedding = embeddingModel.generateEmbedding(content);
+                                
+                                // Store in database
+                                vectorDb.storeEmbedding(file.toString(), content, embedding);
+                                
+                                logger.debug("  - Indexed: {}", file);
+                            } catch (Exception e) {
+                                logger.warn("  - Failed to index {}: {}", file, e.getMessage());
+                            }
                         }
                     }
-                }
 
-                int embeddingCount = vectorDb.getEmbeddingCount();
-                logger.info("");
-                logger.info("✓ Embedding index built successfully!");
-                logger.info("Index location: {}", outputPath.toAbsolutePath());
-                logger.info("Total embeddings stored: {}", embeddingCount);
+                    int embeddingCount = vectorDb.getEmbeddingCount();
+                    logger.info("");
+                    logger.info("✓ Embedding index built successfully!");
+                    logger.info("Index location: {}", outputPath.toAbsolutePath());
+                    logger.info("Total embeddings stored: {}", embeddingCount);
+                }
             }
 
         } catch (Exception e) {
@@ -160,36 +179,6 @@ public class SemiBuildCommand implements Callable<Integer> {
         }
 
         return 0;
-    }
-    
-    /**
-     * Generate mock embedding for demonstration
-     * In production, this would use an actual embedding model
-     */
-    private float[] generateMockEmbedding(String content) {
-        // Create a simple deterministic mock embedding based on content
-        // In production, use actual model like Qwen3-Embedding-0.6B
-        Random random = new Random(content.hashCode());
-        float[] embedding = new float[768]; // Standard embedding size
-        
-        for (int i = 0; i < embedding.length; i++) {
-            embedding[i] = random.nextFloat() * 2 - 1; // Range: -1 to 1
-        }
-        
-        // Normalize the embedding
-        float norm = 0;
-        for (float v : embedding) {
-            norm += v * v;
-        }
-        norm = (float) Math.sqrt(norm);
-        
-        if (norm > 0) {
-            for (int i = 0; i < embedding.length; i++) {
-                embedding[i] /= norm;
-            }
-        }
-        
-        return embedding;
     }
 
     private List<Path> collectFiles() throws IOException {

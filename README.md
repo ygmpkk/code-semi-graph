@@ -4,7 +4,11 @@ A command line for semi or graph code search
 ## Features
 
 - **Semi Code Search**: Perform semi-structured code search with customizable options
-  - **Build Index**: Build embedding index using Transformer models (Qwen3-Embedding-0.6B)
+  - **Build Index**: Build embedding index using configurable embedding models
+  - **Embedding Strategies**: Support for multiple embedding sources:
+    - Mock embeddings for testing and demonstration
+    - DJL-based local models (e.g., Qwen3-Embedding-0.6B) 
+    - HTTP-based remote API services
   - **Vector Database**: Store code embeddings for efficient similarity search using ArcadeDB
   - **Search**: Search code using the built index with cosine similarity
 - **Graph Code Search**: Perform graph-based code search with traversal capabilities
@@ -66,7 +70,7 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi build
 
 The build command will:
 - Scan your codebase for code files
-- Generate embeddings for each file (currently using mock embeddings)
+- Generate embeddings for each file using the specified embedding model
 - Store embeddings in an ArcadeDB database at `./.code-index/arcadedb-vector`
 
 Available options:
@@ -74,9 +78,37 @@ Available options:
 - `-o, --output <path>`: Output directory for the index (default: ./.code-index)
 - `-d, --depth <number>`: Maximum directory depth to traverse
 - `-e, --extensions <ext1,ext2>`: File extensions to index (comma-separated)
-- `-m, --model <model>`: Embedding model to use (default: Qwen/Qwen3-Embedding-0.6B)
+- `-m, --model <model>`: Embedding model to use (default: mock). Can be:
+  - `mock`: Mock embeddings for testing (default)
+  - `Qwen/Qwen3-Embedding-0.6B` or other model names: Use with `--model-path`
+  - `http://...` or `https://...`: Remote API endpoint URL
+- `--model-path <path>`: Path to local model files for DJL models
+- `--api-key <key>`: API key for HTTP-based embedding models
 - `--batch-size <size>`: Batch size for processing files (default: 32)
 - `-h, --help`: Display help for the build command
+
+#### Embedding Model Strategies
+
+The application supports three embedding strategies:
+
+1. **Mock Embeddings** (default): For testing and demonstration
+   ```bash
+   java -jar build/libs/code-semi-graph-1.0.0.jar semi build --model mock
+   ```
+
+2. **DJL Local Models**: Load models like Qwen3-Embedding-0.6B locally using Deep Java Library
+   ```bash
+   java -jar build/libs/code-semi-graph-1.0.0.jar semi build \
+     --model Qwen/Qwen3-Embedding-0.6B \
+     --model-path /path/to/model/files
+   ```
+
+3. **HTTP Remote API**: Call remote embedding services via HTTP
+   ```bash
+   java -jar build/libs/code-semi-graph-1.0.0.jar semi build \
+     --model https://api.example.com/v1/embeddings \
+     --api-key your-api-key-here
+   ```
 
 Example:
 ```bash
@@ -184,6 +216,27 @@ GraphDatabase graphDb = new ArcadeDBGraphDatabase("./.code-index/arcadedb-graph"
 graphDb.initialize();
 ```
 
+### Embedding Models Architecture
+
+The application uses a strategy pattern for embedding generation:
+
+```java
+// Create embedding model using factory
+EmbeddingModel model = EmbeddingModelFactory.createModel("mock");
+model.initialize();
+
+// Generate embeddings
+float[] embedding = model.generateEmbedding("public class Test { }");
+
+// Clean up
+model.close();
+```
+
+Available implementations:
+- **MockEmbeddingModel**: Deterministic mock embeddings for testing
+- **DjlEmbeddingModel**: Load and run transformer models locally using Deep Java Library
+- **HttpEmbeddingModel**: Call remote embedding APIs via HTTP/HTTPS
+
 ## Requirements
 
 - Java 21 or higher
@@ -202,15 +255,28 @@ src/
 │           ├── SemiSearchCommand.java     # Semi search command group
 │           ├── SemiBuildCommand.java      # Semi build index command
 │           ├── GraphSearchCommand.java    # Graph search command
-│           └── db/
-│               ├── VectorDatabase.java              # Vector DB interface
-│               ├── ArcadeDBVectorDatabase.java      # ArcadeDB vector implementation
-│               ├── GraphDatabase.java               # Graph DB interface
-│               └── ArcadeDBGraphDatabase.java       # ArcadeDB graph implementation
+│           ├── db/
+│           │   ├── VectorDatabase.java              # Vector DB interface
+│           │   ├── ArcadeDBVectorDatabase.java      # ArcadeDB vector implementation
+│           │   ├── GraphDatabase.java               # Graph DB interface
+│           │   └── ArcadeDBGraphDatabase.java       # ArcadeDB graph implementation
+│           └── embedding/
+│               ├── EmbeddingModel.java              # Abstract embedding model
+│               ├── EmbeddingModelFactory.java       # Factory for creating models
+│               ├── MockEmbeddingModel.java          # Mock implementation
+│               ├── DjlEmbeddingModel.java           # DJL-based local models
+│               └── HttpEmbeddingModel.java          # HTTP-based remote APIs
 └── test/
     └── java/
         └── com/ygmpkk/codesearch/
-            └── CodeSearchCLITest.java     # Unit tests
+            ├── CodeSearchCLITest.java               # CLI tests
+            ├── db/
+            │   ├── ArcadeDBVectorDatabaseTest.java
+            │   └── ArcadeDBGraphDatabaseTest.java
+            └── embedding/
+                ├── MockEmbeddingModelTest.java
+                ├── EmbeddingModelFactoryTest.java
+                └── EmbeddingModelIntegrationTest.java
 ```
 
 ## License
