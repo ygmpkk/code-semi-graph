@@ -12,7 +12,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class SqliteGraphDatabaseTest {
+class ArcadeDBGraphDatabaseTest {
     
     @TempDir
     Path tempDir;
@@ -21,8 +21,8 @@ class SqliteGraphDatabaseTest {
     
     @BeforeEach
     void setUp() throws Exception {
-        String dbPath = tempDir.resolve("test-graph.db").toString();
-        graphDb = new SqliteGraphDatabase(dbPath);
+        String dbPath = tempDir.resolve("test-arcadedb-graph").toString();
+        graphDb = new ArcadeDBGraphDatabase(dbPath);
         graphDb.initialize();
     }
     

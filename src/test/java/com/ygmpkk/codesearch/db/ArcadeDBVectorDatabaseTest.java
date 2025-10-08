@@ -10,7 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class SqliteVectorDatabaseTest {
+class ArcadeDBVectorDatabaseTest {
     
     @TempDir
     Path tempDir;
@@ -19,8 +19,8 @@ class SqliteVectorDatabaseTest {
     
     @BeforeEach
     void setUp() throws Exception {
-        String dbPath = tempDir.resolve("test-embeddings.db").toString();
-        vectorDb = new SqliteVectorDatabase(dbPath);
+        String dbPath = tempDir.resolve("test-arcadedb-embeddings").toString();
+        vectorDb = new ArcadeDBVectorDatabase(dbPath);
         vectorDb.initialize();
     }
     
