@@ -5,11 +5,14 @@ import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.Document;
 import com.arcadedb.database.MutableDocument;
 import com.arcadedb.query.sql.executor.ResultSet;
+import com.ygmpkk.codesearch.analysis.CodeChunk;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * ArcadeDB implementation of VectorDatabase
@@ -37,31 +40,46 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
             // Create document type for embeddings if it doesn't exist
             if (!database.getSchema().existsType(EMBEDDING_TYPE)) {
                 database.getSchema().createDocumentType(EMBEDDING_TYPE);
-                
-                // Create index on file_path for faster lookups using ArcadeDB schema API
+
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("chunkId", String.class);
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("filePath", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("fileName", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("packageName", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("className", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("qualifiedClassName", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("properties", List.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("methodName", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("methodSignature", String.class);
+                database.getSchema().getType(EMBEDDING_TYPE).createProperty("tokenCount", Integer.class);
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("content", String.class);
                 database.getSchema().getType(EMBEDDING_TYPE).createProperty("embedding", float[].class);
-                
+
                 database.getSchema().createTypeIndex(
-                    com.arcadedb.schema.Schema.INDEX_TYPE.LSM_TREE, 
-                    true, 
-                    EMBEDDING_TYPE, 
-                    "filePath"
+                        com.arcadedb.schema.Schema.INDEX_TYPE.LSM_TREE,
+                        true,
+                        EMBEDDING_TYPE,
+                        "chunkId"
                 );
-                
+
+                database.getSchema().createTypeIndex(
+                        com.arcadedb.schema.Schema.INDEX_TYPE.LSM_TREE,
+                        false,
+                        EMBEDDING_TYPE,
+                        "filePath"
+                );
+
                 logger.debug("Created {} type with schema", EMBEDDING_TYPE);
             }
         });
     }
     
     @Override
-    public void storeEmbedding(String filePath, String content, float[] embedding) throws Exception {
+    public void storeEmbedding(CodeChunk chunk, float[] embedding) throws Exception {
         database.transaction(() -> {
             // Check if document already exists
-            ResultSet result = database.query("sql", 
-                "SELECT FROM " + EMBEDDING_TYPE + " WHERE filePath = ?", filePath);
-            
+            ResultSet result = database.query("sql",
+                "SELECT FROM " + EMBEDDING_TYPE + " WHERE chunkId = ?", chunk.chunkId());
+
             MutableDocument doc;
             if (result.hasNext()) {
                 // Update existing document
@@ -69,14 +87,23 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
             } else {
                 // Create new document
                 doc = database.newDocument(EMBEDDING_TYPE);
-                doc.set("filePath", filePath);
+                doc.set("chunkId", chunk.chunkId());
             }
-            
-            doc.set("content", content);
+
+            doc.set("filePath", chunk.filePath().toString());
+            doc.set("fileName", chunk.fileName());
+            doc.set("packageName", chunk.packageName());
+            doc.set("className", chunk.className());
+            doc.set("qualifiedClassName", chunk.qualifiedClassName());
+            doc.set("properties", new ArrayList<>(chunk.properties()));
+            doc.set("methodName", chunk.methodName());
+            doc.set("methodSignature", chunk.methodSignature());
+            doc.set("tokenCount", chunk.tokenCount());
+            doc.set("content", chunk.content());
             doc.set("embedding", embedding);
             doc.save();
-            
-            logger.debug("Stored embedding for: {}", filePath);
+
+            logger.debug("Stored embedding for chunk: {}", chunk.chunkId());
         });
     }
     
@@ -90,12 +117,36 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
         
         while (resultSet.hasNext()) {
             Document doc = resultSet.next().getRecord().get().asDocument();
+            String chunkId = doc.getString("chunkId");
             String filePath = doc.getString("filePath");
+            String fileName = doc.getString("fileName");
+            String packageName = doc.getString("packageName");
+            String className = doc.getString("className");
+            String qualifiedClassName = doc.getString("qualifiedClassName");
+            @SuppressWarnings("unchecked")
+            List<String> properties = Optional.ofNullable((List<String>) doc.get("properties"))
+                    .map(ArrayList::new)
+                    .orElseGet(ArrayList::new);
+            String methodName = doc.getString("methodName");
+            String methodSignature = doc.getString("methodSignature");
             String content = doc.getString("content");
+            Integer tokenCount = doc.getInteger("tokenCount");
             float[] storedEmbedding = (float[]) doc.get("embedding");
-            
+
             double similarity = cosineSimilarity(queryEmbedding, storedEmbedding);
-            scoredResults.add(new ScoredResult(filePath, content, similarity));
+            scoredResults.add(new ScoredResult(
+                    chunkId,
+                    filePath,
+                    fileName,
+                    packageName,
+                    className,
+                    qualifiedClassName,
+                    properties,
+                    methodName,
+                    methodSignature,
+                    content,
+                    tokenCount != null ? tokenCount : 0,
+                    similarity));
         }
         
         // Sort by similarity (descending) and take top N
@@ -104,7 +155,19 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
         int resultCount = Math.min(limit, scoredResults.size());
         for (int i = 0; i < resultCount; i++) {
             ScoredResult scored = scoredResults.get(i);
-            results.add(new SearchResult(scored.filePath, scored.content, scored.similarity));
+            results.add(new SearchResult(
+                    scored.chunkId,
+                    scored.filePath,
+                    scored.fileName,
+                    scored.packageName,
+                    scored.className,
+                    scored.qualifiedClassName,
+                    List.copyOf(scored.properties),
+                    scored.methodName,
+                    scored.methodSignature,
+                    scored.content,
+                    scored.tokenCount,
+                    scored.similarity));
         }
         
         return results;
@@ -159,13 +222,42 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
      * Helper class for sorting search results
      */
     private static class ScoredResult {
+        final String chunkId;
         final String filePath;
+        final String fileName;
+        final String packageName;
+        final String className;
+        final String qualifiedClassName;
+        final List<String> properties;
+        final String methodName;
+        final String methodSignature;
         final String content;
+        final int tokenCount;
         final double similarity;
-        
-        ScoredResult(String filePath, String content, double similarity) {
+
+        ScoredResult(String chunkId,
+                     String filePath,
+                     String fileName,
+                     String packageName,
+                     String className,
+                     String qualifiedClassName,
+                     List<String> properties,
+                     String methodName,
+                     String methodSignature,
+                     String content,
+                     int tokenCount,
+                     double similarity) {
+            this.chunkId = chunkId;
             this.filePath = filePath;
+            this.fileName = fileName;
+            this.packageName = packageName;
+            this.className = className;
+            this.qualifiedClassName = qualifiedClassName;
+            this.properties = properties;
+            this.methodName = methodName;
+            this.methodSignature = methodSignature;
             this.content = content;
+            this.tokenCount = tokenCount;
             this.similarity = similarity;
         }
     }

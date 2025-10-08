@@ -1,8 +1,15 @@
 package com.ygmpkk.codesearch;
 
+import com.ygmpkk.codesearch.analysis.CodeChunk;
+import com.ygmpkk.codesearch.analysis.CodeFileAnalysis;
+import com.ygmpkk.codesearch.analysis.GraphEdge;
+import com.ygmpkk.codesearch.analysis.GraphNode;
+import com.ygmpkk.codesearch.analysis.TreeSitterCodeAnalyzer;
 import com.ygmpkk.codesearch.config.AppConfig;
 import com.ygmpkk.codesearch.config.ConfigLoader;
+import com.ygmpkk.codesearch.db.ArcadeDBGraphDatabase;
 import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
+import com.ygmpkk.codesearch.db.GraphDatabase;
 import com.ygmpkk.codesearch.db.VectorDatabase;
 import com.ygmpkk.codesearch.embedding.EmbeddingModel;
 import org.apache.logging.log4j.LogManager;
@@ -31,6 +38,8 @@ import java.util.stream.Stream;
 )
 public class SemiBuildCommand implements Callable<Integer> {
     private static final Logger logger = LogManager.getLogger(SemiBuildCommand.class);
+
+    private final TreeSitterCodeAnalyzer codeAnalyzer = new TreeSitterCodeAnalyzer();
 
     @Mixin
     LoggingMixin loggingMixin;
@@ -83,6 +92,7 @@ public class SemiBuildCommand implements Callable<Integer> {
             Path resolvedSource = (sourcePath != null ? sourcePath : Paths.get(".")).toAbsolutePath().normalize();
             Path indexDirectory = SemiCommandSupport.resolveIndexDirectory(appConfig, outputDir);
             Path vectorDbPath = SemiCommandSupport.resolveVectorDatabasePath(indexDirectory);
+            Path graphDbPath = SemiCommandSupport.resolveGraphDatabasePath(indexDirectory);
 
             logger.info("Building embedding index...");
             logger.info("Home directory: {}", resolvedHome);
@@ -90,6 +100,7 @@ public class SemiBuildCommand implements Callable<Integer> {
             logger.info("Source path: {}", resolvedSource);
             logger.info("Index directory: {}", indexDirectory);
             logger.info("Vector database path: {}", vectorDbPath);
+            logger.info("Graph database path: {}", graphDbPath);
             logger.info("Model: {}", embeddingParameters.model());
             logger.info("Model name: {}", embeddingParameters.modelName());
             logger.info("Embedding dimension: {}", embeddingParameters.embeddingDimension());
@@ -106,9 +117,12 @@ public class SemiBuildCommand implements Callable<Integer> {
             }
 
             Files.createDirectories(vectorDbPath);
+            Files.createDirectories(graphDbPath);
 
-            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString())) {
+            try (VectorDatabase vectorDb = new ArcadeDBVectorDatabase(vectorDbPath.toString());
+                 GraphDatabase graphDb = new ArcadeDBGraphDatabase(graphDbPath.toString())) {
                 vectorDb.initialize();
+                graphDb.initialize();
 
                 List<Path> filesToIndex = collectFiles(resolvedSource);
                 logger.info("Found {} files to index", filesToIndex.size());
@@ -124,32 +138,53 @@ public class SemiBuildCommand implements Callable<Integer> {
                             embeddingModel.getEmbeddingDimension());
 
                     int batchSize = embeddingParameters.batchSize();
-                    logger.info("Processing files in batches of {}...", batchSize);
-                    int totalBatches = (int) Math.ceil((double) filesToIndex.size() / batchSize);
+                    logger.info("Processing code chunks in batches of {}...", batchSize);
 
-                    for (int i = 0; i < filesToIndex.size(); i += batchSize) {
-                        int batchNum = (i / batchSize) + 1;
-                        int endIdx = Math.min(i + batchSize, filesToIndex.size());
-                        List<Path> batch = filesToIndex.subList(i, endIdx);
+                    List<CodeChunk> chunkBatch = new ArrayList<>(batchSize);
+                    int processedChunks = 0;
+                    int processedFiles = 0;
 
-                        logger.info("Processing batch {}/{} ({} files)", batchNum, totalBatches, batch.size());
+                    for (Path file : filesToIndex) {
+                        processedFiles++;
+                        try {
+                            String content = Files.readString(file);
+                            CodeFileAnalysis analysis = codeAnalyzer.analyse(file, content);
 
-                        for (Path file : batch) {
-                            try {
-                                String content = Files.readString(file);
-                                float[] embedding = embeddingModel.generateEmbedding(content);
-                                vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                logger.debug("Indexed: {}", file);
-                            } catch (Exception e) {
-                                logger.warn("Failed to index {}: {}", file, e.getMessage());
+                            persistGraphMetadata(graphDb, analysis);
+
+                            for (CodeChunk chunk : analysis.chunks()) {
+                                chunkBatch.add(chunk);
+                                if (chunkBatch.size() >= batchSize) {
+                                    processedChunks += storeChunkBatch(chunkBatch, embeddingModel, vectorDb);
+                                    chunkBatch.clear();
+                                }
                             }
+
+                            if (processedFiles % 10 == 0) {
+                                logger.info("Processed {} / {} files ({} chunks)",
+                                        processedFiles, filesToIndex.size(), processedChunks);
+                            }
+                        } catch (Exception e) {
+                            logger.warn("Failed to process {}: {}", file, e.getMessage());
+                            logger.debug("Stack trace:", e);
                         }
                     }
 
+                    if (!chunkBatch.isEmpty()) {
+                        processedChunks += storeChunkBatch(chunkBatch, embeddingModel, vectorDb);
+                        chunkBatch.clear();
+                    }
+
                     int embeddingCount = vectorDb.getEmbeddingCount();
+                    int nodeCount = graphDb.getNodeCount();
+                    int edgeCount = graphDb.getEdgeCount();
+
                     logger.info("✓ Embedding index built successfully!");
                     logger.info("Index location: {}", indexDirectory);
+                    logger.info("Total chunks stored: {}", processedChunks);
                     logger.info("Total embeddings stored: {}", embeddingCount);
+                    logger.info("Graph nodes stored: {}", nodeCount);
+                    logger.info("Graph edges stored: {}", edgeCount);
                 }
             }
         } catch (Exception e) {
@@ -159,6 +194,46 @@ public class SemiBuildCommand implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    private int storeChunkBatch(List<CodeChunk> chunkBatch,
+                                EmbeddingModel embeddingModel,
+                                VectorDatabase vectorDb) {
+        int stored = 0;
+        for (CodeChunk chunk : chunkBatch) {
+            try {
+                float[] embedding = embeddingModel.generateEmbedding(chunk.content());
+                vectorDb.storeEmbedding(chunk, embedding);
+                stored++;
+                logger.debug("Indexed chunk: {}", chunk.chunkId());
+            } catch (Exception e) {
+                logger.warn("Failed to store chunk {} from {}: {}",
+                        chunk.chunkId(), chunk.filePath(), e.getMessage());
+                logger.debug("Stack trace:", e);
+            }
+        }
+        return stored;
+    }
+
+    private void persistGraphMetadata(GraphDatabase graphDb, CodeFileAnalysis analysis) {
+        for (GraphNode node : analysis.nodes()) {
+            try {
+                graphDb.addNode(node.nodeId(), node.nodeType(), node.name(), node.filePath());
+            } catch (Exception e) {
+                logger.warn("Failed to persist graph node {}: {}", node.nodeId(), e.getMessage());
+                logger.debug("Stack trace:", e);
+            }
+        }
+
+        for (GraphEdge edge : analysis.edges()) {
+            try {
+                graphDb.addEdge(edge.fromNodeId(), edge.toNodeId(), edge.relationshipType());
+            } catch (Exception e) {
+                logger.warn("Failed to persist graph edge {} -> {} [{}]: {}",
+                        edge.fromNodeId(), edge.toNodeId(), edge.relationshipType(), e.getMessage());
+                logger.debug("Stack trace:", e);
+            }
+        }
     }
 
     private List<Path> collectFiles(Path sourcePath) throws IOException {

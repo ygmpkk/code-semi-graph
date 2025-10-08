@@ -161,12 +161,25 @@ public class SemiSearchCommand implements Callable<Integer> {
 
                 int rank = 1;
                 for (VectorDatabase.SearchResult result : results) {
+                    String location = result.getQualifiedClassName() != null && !result.getQualifiedClassName().isBlank()
+                            ? result.getQualifiedClassName()
+                            : result.getClassName();
+                    String method = result.getMethodSignature() != null && !result.getMethodSignature().isBlank()
+                            ? result.getMethodSignature()
+                            : result.getMethodName();
+
                     System.out.printf(
-                            "%d. %s (similarity: %.4f)%n",
+                            "%d. %s :: %s :: %s (tokens: %d, similarity: %.4f)%n",
                             rank++,
                             result.getFilePath(),
+                            location != null && !location.isBlank() ? location : "<unknown>",
+                            method != null && !method.isBlank() ? method : "<unknown>",
+                            result.getTokenCount(),
                             result.getSimilarity()
                     );
+                    if (!result.getProperties().isEmpty()) {
+                        System.out.printf("    Properties: %s%n", String.join(", ", result.getProperties()));
+                    }
                 }
             }
         } catch (Exception e) {

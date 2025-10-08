@@ -15,6 +15,7 @@ import java.nio.file.Paths;
 public final class SemiCommandSupport {
     private static final Path DEFAULT_HOME = Paths.get(System.getProperty("user.home"), ".code-semi-graph");
     private static final String VECTOR_DB_DIRECTORY = "arcadedb-vector";
+    private static final String GRAPH_DB_DIRECTORY = "arcadedb-graph";
 
     private SemiCommandSupport() {
     }
@@ -77,6 +78,10 @@ public final class SemiCommandSupport {
 
     public static Path resolveVectorDatabasePath(Path indexDirectory) {
         return indexDirectory.resolve(VECTOR_DB_DIRECTORY);
+    }
+
+    public static Path resolveGraphDatabasePath(Path indexDirectory) {
+        return indexDirectory.resolve(GRAPH_DB_DIRECTORY);
     }
 
     private static String firstNonBlank(String value, String fallback) {
