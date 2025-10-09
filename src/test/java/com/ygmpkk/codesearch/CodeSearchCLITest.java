@@ -61,7 +61,8 @@ public class CodeSearchCLITest {
         CommandLine cmd = new CommandLine(app);
         
         int exitCode = cmd.execute("graph", "test-node");
-        assertEquals(0, exitCode, "Graph search command should return exit code 0");
+        // Should return 1 because database doesn't exist
+        assertEquals(1, exitCode, "Graph search command should return exit code 1 when database doesn't exist");
     }
 
     @Test
@@ -70,7 +71,8 @@ public class CodeSearchCLITest {
         CommandLine cmd = new CommandLine(app);
         
         int exitCode = cmd.execute("graph", "test-node", "--path", "/tmp", "--traversal", "DFS", "--max-nodes", "100");
-        assertEquals(0, exitCode, "Graph search with options should return exit code 0");
+        // Should return 1 because database doesn't exist
+        assertEquals(1, exitCode, "Graph search with options should return exit code 1 when database doesn't exist");
     }
 
     @Test

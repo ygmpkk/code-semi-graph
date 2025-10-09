@@ -86,19 +86,18 @@ public class GraphSearchCommand implements Callable<Integer> {
         try {
             Path graphDbPath = Paths.get(dbPath);
             
-            // Check if database exists, if not create sample data
-            boolean dbExists = Files.exists(graphDbPath);
+            // Check if database exists
+            if (!Files.exists(graphDbPath)) {
+                logger.error("");
+                logger.error("Graph database not found: {}", dbPath);
+                logger.error("Please run 'semi build' first to create the graph database from your code.");
+                logger.error("Example: semi build -p /path/to/your/code");
+                return 1;
+            }
             
             try (GraphDatabase graphDb = new ArcadeDBGraphDatabase(dbPath)) {
-                if (!dbExists) {
-                    logger.info("");
-                    logger.info("Graph database not found. Creating with sample data...");
-                    graphDb.initialize();
-                    createSampleGraphData(graphDb);
-                } else {
-                    logger.info("");
-                    logger.info("Using existing graph database");
-                }
+                logger.info("");
+                logger.info("Using graph database from: {}", dbPath);
                 
                 // Find the starting node
                 GraphDatabase.Node startNode = graphDb.findNodeByName(query);
@@ -106,7 +105,7 @@ public class GraphSearchCommand implements Callable<Integer> {
                 if (startNode == null) {
                     logger.info("");
                     logger.info("Node not found: {}", query);
-                    logger.info("Try one of the sample nodes: MyClass, MyInterface, processData, or DatabaseHelper");
+                    logger.info("Please use a valid class or method name from your indexed code.");
                     return 0;
                 }
                 
@@ -164,32 +163,5 @@ public class GraphSearchCommand implements Callable<Integer> {
         }
         
         return 0;
-    }
-    
-    /**
-     * Create sample graph data for demonstration
-     */
-    private void createSampleGraphData(GraphDatabase graphDb) throws Exception {
-        // Add sample nodes
-        graphDb.addNode("class:MyClass", "class", "MyClass", "/src/MyClass.java");
-        graphDb.addNode("class:BaseClass", "class", "BaseClass", "/src/BaseClass.java");
-        graphDb.addNode("interface:MyInterface", "interface", "MyInterface", "/src/MyInterface.java");
-        graphDb.addNode("method:processData", "method", "processData", "/src/MyClass.java");
-        graphDb.addNode("method:saveData", "method", "saveData", "/src/MyClass.java");
-        graphDb.addNode("class:DatabaseHelper", "class", "DatabaseHelper", "/src/util/DatabaseHelper.java");
-        graphDb.addNode("method:connect", "method", "connect", "/src/util/DatabaseHelper.java");
-        
-        // Add sample edges
-        graphDb.addEdge("class:MyClass", "class:BaseClass", "extends");
-        graphDb.addEdge("class:MyClass", "interface:MyInterface", "implements");
-        graphDb.addEdge("class:MyClass", "method:processData", "contains");
-        graphDb.addEdge("class:MyClass", "method:saveData", "contains");
-        graphDb.addEdge("method:processData", "method:saveData", "calls");
-        graphDb.addEdge("method:saveData", "class:DatabaseHelper", "uses");
-        graphDb.addEdge("class:DatabaseHelper", "method:connect", "contains");
-        graphDb.addEdge("method:saveData", "method:connect", "calls");
-        
-        logger.info("Sample graph data created with {} nodes and {} edges", 
-            graphDb.getNodeCount(), graphDb.getEdgeCount());
     }
 }
