@@ -2,6 +2,8 @@ package com.ygmpkk.codesearch;
 
 import com.ygmpkk.codesearch.db.ArcadeDBGraphDatabase;
 import com.ygmpkk.codesearch.db.GraphDatabase;
+import com.ygmpkk.codesearch.parser.CodeMetadata;
+import com.ygmpkk.codesearch.parser.TreeSitterParser;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -15,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.stream.Stream;
 
 /**
  * Command for performing graph code search
@@ -84,112 +87,174 @@ public class GraphSearchCommand implements Callable<Integer> {
         }
         
         try {
+            Path sourceRoot = Paths.get(path).toAbsolutePath().normalize();
+            if (!Files.exists(sourceRoot)) {
+                logger.error("Source path does not exist: {}", sourceRoot);
+                return 1;
+            }
+
             Path graphDbPath = Paths.get(dbPath);
-            
-            // Check if database exists, if not create sample data
-            boolean dbExists = Files.exists(graphDbPath);
-            
+
             try (GraphDatabase graphDb = new ArcadeDBGraphDatabase(dbPath)) {
-                if (!dbExists) {
-                    logger.info("");
-                    logger.info("Graph database not found. Creating with sample data...");
-                    graphDb.initialize();
-                    createSampleGraphData(graphDb);
+                graphDb.initialize();
+
+                logger.info("");
+                if (Files.exists(graphDbPath)) {
+                    logger.info("Updating graph database with call chains from: {}", sourceRoot);
                 } else {
-                    logger.info("");
-                    logger.info("Using existing graph database");
+                    logger.info("Creating graph database at {} from source: {}", graphDbPath, sourceRoot);
                 }
-                
+
+                buildGraphFromSource(graphDb, sourceRoot);
+
                 // Find the starting node
                 GraphDatabase.Node startNode = graphDb.findNodeByName(query);
-                
+
                 if (startNode == null) {
                     logger.info("");
                     logger.info("Node not found: {}", query);
-                    logger.info("Try one of the sample nodes: MyClass, MyInterface, processData, or DatabaseHelper");
+                    logger.info("Ensure the symbol exists in the parsed sources under {}", sourceRoot);
                     return 0;
                 }
-                
+
                 logger.info("");
                 logger.info("Found starting node: {} ({})", startNode.getName(), startNode.getNodeType());
                 logger.info("File: {}", startNode.getFilePath());
-                
+
                 // Set up relationship type filter
                 Set<String> relationshipFilter = null;
                 if (relationships != null && relationships.length > 0) {
                     relationshipFilter = new HashSet<>(Arrays.asList(relationships));
                 }
-                
+
                 // Perform traversal
                 int depth = maxNodes != null ? maxNodes : 10;
                 List<GraphDatabase.Node> traversedNodes;
-                
+
                 logger.info("");
                 logger.info("Traversing graph using {}...", traversalType);
-                
+
                 if ("DFS".equalsIgnoreCase(traversalType)) {
                     traversedNodes = graphDb.traverseDFS(startNode.getNodeId(), depth, relationshipFilter);
                 } else {
                     traversedNodes = graphDb.traverseBFS(startNode.getNodeId(), depth, relationshipFilter);
                 }
-                
+
                 // Display results
                 logger.info("");
                 logger.info("Graph traversal results ({} nodes):", traversedNodes.size());
                 logger.info("");
-                
+
                 for (int i = 0; i < traversedNodes.size(); i++) {
                     GraphDatabase.Node node = traversedNodes.get(i);
-                    logger.info("  {}. {} ({}) - {}", 
-                        i + 1, 
-                        node.getName(), 
-                        node.getNodeType(), 
+                    logger.info("  {}. {} ({}) - {}",
+                        i + 1,
+                        node.getName(),
+                        node.getNodeType(),
                         node.getFilePath());
                 }
-                
+
                 // Display graph statistics
                 logger.info("");
                 logger.info("Graph statistics:");
                 logger.info("  Total nodes: {}", graphDb.getNodeCount());
                 logger.info("  Total edges: {}", graphDb.getEdgeCount());
             }
-            
+
             logger.info("");
             logger.info("✓ Graph search completed successfully");
-            
+
+        } catch (IllegalStateException e) {
+            logger.error("Tree-sitter parsing unavailable: {}", e.getMessage());
+            logger.debug("Stack trace:", e);
+            return 1;
         } catch (Exception e) {
             logger.error("Error performing graph search: {}", e.getMessage());
             logger.debug("Stack trace:", e);
             return 1;
         }
-        
+
         return 0;
     }
-    
-    /**
-     * Create sample graph data for demonstration
-     */
-    private void createSampleGraphData(GraphDatabase graphDb) throws Exception {
-        // Add sample nodes
-        graphDb.addNode("class:MyClass", "class", "MyClass", "/src/MyClass.java");
-        graphDb.addNode("class:BaseClass", "class", "BaseClass", "/src/BaseClass.java");
-        graphDb.addNode("interface:MyInterface", "interface", "MyInterface", "/src/MyInterface.java");
-        graphDb.addNode("method:processData", "method", "processData", "/src/MyClass.java");
-        graphDb.addNode("method:saveData", "method", "saveData", "/src/MyClass.java");
-        graphDb.addNode("class:DatabaseHelper", "class", "DatabaseHelper", "/src/util/DatabaseHelper.java");
-        graphDb.addNode("method:connect", "method", "connect", "/src/util/DatabaseHelper.java");
-        
-        // Add sample edges
-        graphDb.addEdge("class:MyClass", "class:BaseClass", "extends");
-        graphDb.addEdge("class:MyClass", "interface:MyInterface", "implements");
-        graphDb.addEdge("class:MyClass", "method:processData", "contains");
-        graphDb.addEdge("class:MyClass", "method:saveData", "contains");
-        graphDb.addEdge("method:processData", "method:saveData", "calls");
-        graphDb.addEdge("method:saveData", "class:DatabaseHelper", "uses");
-        graphDb.addEdge("class:DatabaseHelper", "method:connect", "contains");
-        graphDb.addEdge("method:saveData", "method:connect", "calls");
-        
-        logger.info("Sample graph data created with {} nodes and {} edges", 
-            graphDb.getNodeCount(), graphDb.getEdgeCount());
+
+    private void buildGraphFromSource(GraphDatabase graphDb, Path sourceRoot) throws Exception {
+        List<Path> javaFiles = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(sourceRoot)) {
+            stream.filter(Files::isRegularFile)
+                .filter(file -> file.toString().endsWith(".java"))
+                .forEach(javaFiles::add);
+        }
+
+        if (javaFiles.isEmpty()) {
+            logger.warn("No Java source files found under {}. Skipping call graph construction.", sourceRoot);
+            return;
+        }
+
+        int classCount = 0;
+        int methodCount = 0;
+        int callCount = 0;
+
+        try (TreeSitterParser parser = new TreeSitterParser()) {
+            for (Path file : javaFiles) {
+                CodeMetadata metadata = parser.parseJavaFile(file);
+
+                if (metadata.className() == null || metadata.className().isBlank()) {
+                    continue;
+                }
+
+                String filePath = relativizePath(sourceRoot, file);
+                String classNodeId = filePath + ":" + metadata.className();
+                graphDb.addNode(classNodeId, "class", metadata.className(), filePath);
+                classCount++;
+
+                List<CodeMetadata.MethodInfo> methods = metadata.methods();
+                if (methods == null) {
+                    continue;
+                }
+
+                for (CodeMetadata.MethodInfo method : methods) {
+                    if (method == null || method.name() == null || method.name().isBlank()) {
+                        continue;
+                    }
+
+                    String methodNodeId = classNodeId + ":" + method.name();
+                    graphDb.addNode(methodNodeId, "method", method.name(), filePath);
+                    graphDb.addEdge(classNodeId, methodNodeId, "contains");
+                    methodCount++;
+
+                    List<String> callees = method.callees();
+                    if (callees == null) {
+                        continue;
+                    }
+
+                    for (String callee : callees) {
+                        if (callee == null || callee.isBlank()) {
+                            continue;
+                        }
+
+                        String calleeNodeId = classNodeId + ":" + callee;
+                        graphDb.addNode(calleeNodeId, "method", callee, filePath);
+                        graphDb.addEdge(methodNodeId, calleeNodeId, "calls");
+                        callCount++;
+                    }
+                }
+            }
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+            throw new IllegalStateException("Tree-sitter native libraries are not available", e);
+        }
+
+        logger.info("Parsed {} classes, {} methods, and {} call relationships from {}", classCount, methodCount, callCount, sourceRoot);
+        logger.info("Graph now contains {} nodes and {} edges", graphDb.getNodeCount(), graphDb.getEdgeCount());
+    }
+
+    private String relativizePath(Path root, Path file) {
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        Path normalizedFile = file.toAbsolutePath().normalize();
+
+        if (normalizedFile.startsWith(normalizedRoot)) {
+            return normalizedRoot.relativize(normalizedFile).toString();
+        }
+
+        return normalizedFile.toString();
     }
 }
