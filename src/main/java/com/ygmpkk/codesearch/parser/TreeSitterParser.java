@@ -4,13 +4,18 @@ import ch.usi.si.seart.treesitter.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * Parser for source code using tree-sitter
@@ -19,8 +24,10 @@ import java.util.List;
 public class TreeSitterParser implements AutoCloseable {
     private static final Logger logger = LogManager.getLogger(TreeSitterParser.class);
 
-    private final Language language;
-    private final Parser parser;
+    private static final String UNKNOWN_LANGUAGE = "unknown";
+    private static final List<Language> STRUCTURED_METADATA_LANGUAGES = List.of(Language.JAVA);
+
+    private final Map<Language, Parser> parserCache = new EnumMap<>(Language.class);
 
     static {
         loadNativeLibrary();
@@ -103,9 +110,27 @@ public class TreeSitterParser implements AutoCloseable {
     }
 
     public TreeSitterParser() {
-        // Initialize tree-sitter for Java
-        this.language = Language.JAVA;
-        this.parser = Parser.getFor(language);
+        // Parsers are initialised lazily per language when needed
+    }
+
+    /**
+     * Parse a source file and extract metadata based on the detected language.
+     */
+    public CodeMetadata parseFile(Path filePath) throws Exception {
+        String content = Files.readString(filePath);
+        return parseCode(filePath.toString(), content);
+    }
+
+    /**
+     * Parse source code and extract metadata based on the detected language from the file name.
+     */
+    public CodeMetadata parseCode(String filePath, String content) throws Exception {
+        Language language = detectLanguage(filePath);
+        if (language == null) {
+            logger.debug("No associated tree-sitter language for {}. Returning empty metadata.", filePath);
+            return emptyMetadata(filePath, UNKNOWN_LANGUAGE);
+        }
+        return parseCode(filePath, content, language);
     }
 
     /**
@@ -113,23 +138,88 @@ public class TreeSitterParser implements AutoCloseable {
      */
     public CodeMetadata parseJavaFile(Path filePath) throws Exception {
         String content = Files.readString(filePath);
-        return parseJavaCode(filePath.toString(), content);
+        return parseCode(filePath.toString(), content, Language.JAVA);
     }
 
     /**
      * Parse Java source code and extract metadata
      */
     public CodeMetadata parseJavaCode(String filePath, String content) throws Exception {
+        return parseCode(filePath, content, Language.JAVA);
+    }
+
+    private CodeMetadata parseCode(String filePath, String content, Language language) throws Exception {
+        Parser parser = getParser(language);
         try (Tree tree = parser.parse(content)) {
             Node root = tree.getRootNode();
 
-            String packageName = extractPackageName(root, content);
-            String className = extractClassName(root, content);
-            List<String> properties = extractProperties(root, content);
-            List<CodeMetadata.MethodInfo> methods = extractMethods(root, content);
+            if (language == Language.JAVA) {
+                return buildJavaMetadata(filePath, content, root, language);
+            }
 
-            return new CodeMetadata(filePath, packageName, className, properties, methods);
+            logger.debug("Tree-sitter parsed {} using language {} but no structured extractor is available.",
+                    filePath, language);
+            return emptyMetadata(filePath, language);
         }
+    }
+
+    private Parser getParser(Language language) {
+        synchronized (parserCache) {
+            return parserCache.computeIfAbsent(language, Parser::getFor);
+        }
+    }
+
+    private Language detectLanguage(String filePath) {
+        Path candidatePath;
+        try {
+            candidatePath = Path.of(filePath);
+        } catch (InvalidPathException e) {
+            logger.debug("Invalid path {} for language detection: {}", filePath, e.getMessage());
+            return null;
+        }
+
+        Collection<Language> associated = Language.associatedWith(candidatePath);
+        if (associated.isEmpty()) {
+            return null;
+        }
+
+        for (Language preferred : STRUCTURED_METADATA_LANGUAGES) {
+            if (associated.contains(preferred)) {
+                return preferred;
+            }
+        }
+
+        Language selected = associated.stream()
+                .sorted(Comparator.comparingInt(Language::ordinal))
+                .findFirst()
+                .orElse(null);
+
+        if (selected != null && associated.size() > 1) {
+            logger.debug("Multiple languages {} associated with {}. Selected {}.", associated, filePath, selected);
+        }
+
+        return selected;
+    }
+
+    private CodeMetadata buildJavaMetadata(String filePath, String content, Node root, Language language) {
+        String packageName = extractPackageName(root, content);
+        String className = extractClassName(root, content);
+        List<String> properties = extractProperties(root, content);
+        List<CodeMetadata.MethodInfo> methods = extractMethods(root, content);
+
+        return new CodeMetadata(filePath, toLanguageName(language), packageName, className, properties, methods);
+    }
+
+    private CodeMetadata emptyMetadata(String filePath, Language language) {
+        return emptyMetadata(filePath, toLanguageName(language));
+    }
+
+    private CodeMetadata emptyMetadata(String filePath, String language) {
+        return new CodeMetadata(filePath, language, "", "", List.of(), List.of());
+    }
+
+    private String toLanguageName(Language language) {
+        return language == null ? UNKNOWN_LANGUAGE : language.name().toLowerCase(Locale.ROOT);
     }
 
     private String extractPackageName(Node root, String content) {
@@ -345,8 +435,9 @@ public class TreeSitterParser implements AutoCloseable {
 
     @Override
     public void close() {
-        if (parser != null) {
-            parser.close();
+        synchronized (parserCache) {
+            parserCache.values().forEach(Parser::close);
+            parserCache.clear();
         }
     }
 }

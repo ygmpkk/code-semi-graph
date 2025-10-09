@@ -141,79 +141,82 @@ public class SemiBuildCommand implements Callable<Integer> {
 
                     for (Path file : filesToIndex) {
                         try {
-                            // Parse the file with tree-sitter (only Java files for now)
-                            if (!file.toString().endsWith(".java")) {
-                                // Fall back to simple embedding for non-Java files
-                                String content = Files.readString(file);
-                                float[] embedding = embeddingModel.generateEmbedding(content);
-                                vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                logger.debug("Indexed (non-Java): {}", file);
-                                continue;
-                            }
+                            boolean indexedWithTreeSitter = false;
 
-                            // Lazy initialization of tree-sitter parser for Java files
                             if (treeSitterParser == null) {
                                 try {
                                     treeSitterParser = new TreeSitterParser();
-                                    logger.debug("TreeSitter parser initialized for Java parsing");
+                                    logger.debug("Tree-sitter parser initialized for multi-language parsing");
                                 } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
-                                    logger.warn("TreeSitter native libraries not available. Falling back to simple indexing: {}", e.getMessage());
-                                    // Fall back to simple embedding
-                                    String content = Files.readString(file);
-                                    float[] embedding = embeddingModel.generateEmbedding(content);
-                                    vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                    logger.debug("Indexed (fallback): {}", file);
-                                    continue;
+                                    logger.warn("Tree-sitter native libraries not available. Falling back to simple indexing: {}",
+                                            e.getMessage());
                                 }
                             }
 
-                            CodeMetadata metadata = treeSitterParser.parseJavaFile(file);
-                            logger.debug("Parsed {}: package={}, class={}, methods={}",
-                                    file, metadata.packageName(), metadata.className(), metadata.methods().size());
+                            if (treeSitterParser != null) {
+                                try {
+                                    CodeMetadata metadata = treeSitterParser.parseFile(file);
+                                    logger.debug("Parsed {} using {}: package={}, class={}, methods={}",
+                                            file,
+                                            metadata.language(),
+                                            metadata.packageName(),
+                                            metadata.className(),
+                                            metadata.methods().size());
 
-                            // Add class node to graph
-                            String classNodeId = metadata.filePath() + ":" + metadata.className();
-                            graphDb.addNode(classNodeId, "class", metadata.className(), metadata.filePath());
+                                    if (hasStructuredMetadata(metadata)) {
+                                        String classNodeId = metadata.filePath() + ":" + metadata.className();
+                                        graphDb.addNode(classNodeId, "class", metadata.className(), metadata.filePath());
 
-                            // Process call chains and add to graph
-                            for (CodeMetadata.MethodInfo method : metadata.methods()) {
-                                String methodNodeId = classNodeId + ":" + method.name();
-                                graphDb.addNode(methodNodeId, "method", method.name(), metadata.filePath());
-                                
-                                // Link method to class
-                                graphDb.addEdge(classNodeId, methodNodeId, "contains");
-                                
-                                // Add call relationships
-                                for (String callee : method.callees()) {
-                                    String calleeNodeId = classNodeId + ":" + callee;
-                                    // Create callee node if it doesn't exist (might be external)
-                                    graphDb.addNode(calleeNodeId, "method", callee, metadata.filePath());
-                                    graphDb.addEdge(methodNodeId, calleeNodeId, "calls");
-                                    totalCallChains++;
+                                        for (CodeMetadata.MethodInfo method : metadata.methods()) {
+                                            String methodNodeId = classNodeId + ":" + method.name();
+                                            graphDb.addNode(methodNodeId, "method", method.name(), metadata.filePath());
+
+                                            graphDb.addEdge(classNodeId, methodNodeId, "contains");
+
+                                            for (String callee : method.callees()) {
+                                                String calleeNodeId = classNodeId + ":" + callee;
+                                                graphDb.addNode(calleeNodeId, "method", callee, metadata.filePath());
+                                                graphDb.addEdge(methodNodeId, calleeNodeId, "calls");
+                                                totalCallChains++;
+                                            }
+                                        }
+
+                                        List<CodeChunker.CodeChunk> chunks = chunker.chunkCode(metadata);
+                                        logger.debug("Created {} chunks from {}", chunks.size(), file);
+
+                                        for (CodeChunker.CodeChunk chunk : chunks) {
+                                            String chunkContent = chunk.getFullContext();
+                                            float[] embedding = embeddingModel.generateEmbedding(chunkContent);
+
+                                            vectorDb.storeEmbeddingWithMetadata(
+                                                    chunk.filePath(),
+                                                    chunk.packageName(),
+                                                    chunk.className(),
+                                                    chunk.methodName(),
+                                                    chunkContent,
+                                                    embedding
+                                            );
+                                            totalChunks++;
+                                        }
+
+                                        logger.debug("Indexed: {} ({} chunks)", file, chunks.size());
+                                        indexedWithTreeSitter = true;
+                                    } else {
+                                        logger.debug("Tree-sitter metadata for {} lacks structural details. Falling back to simple indexing.",
+                                                file);
+                                    }
+                                } catch (Exception e) {
+                                    logger.warn("Failed to parse {} with tree-sitter: {}", file, e.getMessage());
+                                    logger.debug("Stack trace:", e);
                                 }
                             }
 
-                            // Chunk the code
-                            List<CodeChunker.CodeChunk> chunks = chunker.chunkCode(metadata);
-                            logger.debug("Created {} chunks from {}", chunks.size(), file);
-
-                            // Store each chunk with embedding
-                            for (CodeChunker.CodeChunk chunk : chunks) {
-                                String chunkContent = chunk.getFullContext();
-                                float[] embedding = embeddingModel.generateEmbedding(chunkContent);
-                                
-                                vectorDb.storeEmbeddingWithMetadata(
-                                        chunk.filePath(),
-                                        chunk.packageName(),
-                                        chunk.className(),
-                                        chunk.methodName(),
-                                        chunkContent,
-                                        embedding
-                                );
-                                totalChunks++;
+                            if (!indexedWithTreeSitter) {
+                                String content = Files.readString(file);
+                                float[] embedding = embeddingModel.generateEmbedding(content);
+                                vectorDb.storeEmbedding(file.toString(), content, embedding);
+                                logger.debug("Indexed (fallback): {}", file);
                             }
-
-                            logger.debug("Indexed: {} ({} chunks)", file, chunks.size());
                         } catch (Exception e) {
                             logger.warn("Failed to index {}: {}", file, e.getMessage());
                             logger.debug("Stack trace:", e);
@@ -249,6 +252,22 @@ public class SemiBuildCommand implements Callable<Integer> {
         }
 
         return 0;
+    }
+
+    private boolean hasStructuredMetadata(CodeMetadata metadata) {
+        if (metadata == null) {
+            return false;
+        }
+
+        boolean hasLanguage = metadata.language() != null
+                && !metadata.language().isBlank()
+                && !"unknown".equalsIgnoreCase(metadata.language());
+
+        boolean hasStructure = (metadata.className() != null && !metadata.className().isBlank())
+                || !metadata.methods().isEmpty()
+                || !metadata.properties().isEmpty();
+
+        return hasLanguage && hasStructure;
     }
 
     private List<Path> collectFiles(Path sourcePath) throws IOException {

@@ -34,6 +34,7 @@ class TreeSitterParserTest {
             CodeMetadata metadata = parser.parseJavaCode("/test/HelloWorld.java", javaCode);
 
             assertEquals("/test/HelloWorld.java", metadata.filePath());
+            assertEquals("java", metadata.language());
             assertEquals("com.example", metadata.packageName());
             assertEquals("HelloWorld", metadata.className());
             assertEquals(1, metadata.properties().size());
@@ -49,6 +50,24 @@ class TreeSitterParserTest {
             CodeMetadata.MethodInfo method2 = metadata.methods().get(1);
             assertEquals("getMessage", method2.name());
             assertEquals("String", method2.returnType());
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "treesitter.available", matches = "true")
+    void testAutoDetectsLanguageFromFileName() throws Exception {
+        String pythonCode = """
+                def greet(name):
+                    print(f"Hello {name}")
+                """;
+
+        try (TreeSitterParser parser = new TreeSitterParser()) {
+            CodeMetadata metadata = parser.parseCode("/tmp/sample.py", pythonCode);
+
+            assertEquals("/tmp/sample.py", metadata.filePath());
+            assertEquals("python", metadata.language());
+            assertTrue(metadata.methods().isEmpty());
+            assertTrue(metadata.properties().isEmpty());
         }
     }
 

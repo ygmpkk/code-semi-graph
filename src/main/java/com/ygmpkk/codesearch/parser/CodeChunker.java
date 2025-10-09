@@ -23,6 +23,7 @@ public class CodeChunker {
      */
     public record CodeChunk(
             String filePath,
+            String language,
             String packageName,
             String className,
             String methodName,
@@ -34,6 +35,9 @@ public class CodeChunker {
     ) {
         public String getFullContext() {
             StringBuilder context = new StringBuilder();
+            if (language != null && !language.isEmpty()) {
+                context.append("Language: ").append(language).append("\n");
+            }
             if (packageName != null && !packageName.isEmpty()) {
                 context.append("Package: ").append(packageName).append("\n");
             }
@@ -67,6 +71,7 @@ public class CodeChunker {
             String content = "// No methods found in file";
             CodeChunk chunk = new CodeChunk(
                     metadata.filePath(),
+                    metadata.language(),
                     metadata.packageName(),
                     metadata.className(),
                     "",
@@ -90,6 +95,7 @@ public class CodeChunker {
         for (CodeMetadata.MethodInfo method : metadata.methods()) {
             CodeChunk chunk = new CodeChunk(
                     metadata.filePath(),
+                    metadata.language(),
                     metadata.packageName(),
                     metadata.className(),
                     method.name(),
@@ -109,6 +115,7 @@ public class CodeChunker {
                 String truncatedBody = truncateToMaxChars(method.body(), MAX_CHUNK_CHARS);
                 chunk = new CodeChunk(
                         metadata.filePath(),
+                        metadata.language(),
                         metadata.packageName(),
                         metadata.className(),
                         method.name(),

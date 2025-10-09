@@ -33,6 +33,7 @@ class CodeChunkerTest {
 
         CodeMetadata metadata = new CodeMetadata(
                 "/test/File.java",
+                "java",
                 "com.test",
                 "TestClass",
                 List.of("field1", "field2"),
@@ -48,6 +49,7 @@ class CodeChunkerTest {
         // Verify first chunk
         CodeChunker.CodeChunk chunk1 = chunks.get(0);
         assertEquals("/test/File.java", chunk1.filePath());
+        assertEquals("java", chunk1.language());
         assertEquals("com.test", chunk1.packageName());
         assertEquals("TestClass", chunk1.className());
         assertEquals("testMethod", chunk1.methodName());
@@ -59,6 +61,7 @@ class CodeChunkerTest {
 
         // Verify context includes metadata
         String context1 = chunk1.getFullContext();
+        assertTrue(context1.contains("Language: java"));
         assertTrue(context1.contains("Package: com.test"));
         assertTrue(context1.contains("Class: TestClass"));
         assertTrue(context1.contains("Method: testMethod"));
@@ -69,6 +72,7 @@ class CodeChunkerTest {
     void testChunkingWithNoMethods() {
         CodeMetadata metadata = new CodeMetadata(
                 "/test/Empty.java",
+                "java",
                 "com.test",
                 "EmptyClass",
                 List.of(),
@@ -97,6 +101,7 @@ class CodeChunkerTest {
 
         CodeMetadata metadata = new CodeMetadata(
                 "/test/Large.java",
+                "java",
                 "com.test",
                 "LargeClass",
                 List.of(),

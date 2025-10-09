@@ -8,6 +8,7 @@ import java.util.List;
  */
 public record CodeMetadata(
         String filePath,
+        String language,
         String packageName,
         String className,
         List<String> properties,
