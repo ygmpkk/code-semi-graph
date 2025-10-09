@@ -215,7 +215,7 @@ public class SemiBuildCommand implements Callable<Integer> {
 
                             logger.debug("Indexed: {} ({} chunks)", file, chunks.size());
                         } catch (Exception e) {
-                            logger.warn("Failed to index {}: {}", file, e.getMessage());
+                            logger.warn("Failed to index {}: {}, error: ", file, e.getMessage());
                             logger.debug("Stack trace:", e);
                         }
                     }

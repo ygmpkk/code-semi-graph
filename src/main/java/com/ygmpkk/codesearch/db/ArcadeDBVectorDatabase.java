@@ -67,9 +67,6 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
     public void storeEmbeddingWithMetadata(String filePath, String packageName, String className,
                                           String methodName, String content, float[] embedding) throws Exception {
         database.transaction(() -> {
-            // Create a unique key combining file path and method name
-            String uniqueKey = filePath + ":" + (methodName != null && !methodName.isEmpty() ? methodName : "file");
-            
             // Check if document already exists
             ResultSet result = database.query("sql", 
                 "SELECT FROM " + EMBEDDING_TYPE + " WHERE filePath = ? AND methodName = ?", 
@@ -91,7 +88,7 @@ public class ArcadeDBVectorDatabase implements VectorDatabase {
             doc.set("content", content);
             doc.set("embedding", embedding);
             doc.save();
-            
+
             logger.debug("Stored embedding for: {} (method: {})", filePath, methodName);
         });
     }
