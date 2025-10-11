@@ -103,23 +103,53 @@ public class TreeSitterParser implements AutoCloseable {
     }
 
     public TreeSitterParser() {
-        // Initialize tree-sitter for Java
-        this.language = Language.JAVA;
+        // Initialize tree-sitter for Java (default for backward compatibility)
+        this(Language.JAVA);
+    }
+    
+    /**
+     * Create a parser for a specific language
+     * 
+     * @param language the tree-sitter language to use for parsing
+     */
+    public TreeSitterParser(Language language) {
+        this.language = language;
         this.parser = Parser.getFor(language);
     }
 
     /**
      * Parse a Java source file and extract metadata
+     * @deprecated Use {@link #parseFile(Path)} instead
      */
+    @Deprecated
     public CodeMetadata parseJavaFile(Path filePath) throws Exception {
         String content = Files.readString(filePath);
         return parseJavaCode(filePath.toString(), content);
     }
+    
+    /**
+     * Parse a source file and extract metadata
+     * Works with any language supported by tree-sitter
+     */
+    public CodeMetadata parseFile(Path filePath) throws Exception {
+        String content = Files.readString(filePath);
+        return parseCode(filePath.toString(), content);
+    }
 
     /**
      * Parse Java source code and extract metadata
+     * @deprecated Use {@link #parseCode(String, String)} instead
      */
+    @Deprecated
     public CodeMetadata parseJavaCode(String filePath, String content) throws Exception {
+        return parseCode(filePath, content);
+    }
+    
+    /**
+     * Parse source code and extract metadata
+     * Automatically adapts to the language specified in the constructor
+     */
+    public CodeMetadata parseCode(String filePath, String content) throws Exception {
         try (Tree tree = parser.parse(content)) {
             Node root = tree.getRootNode();
 
@@ -133,6 +163,7 @@ public class TreeSitterParser implements AutoCloseable {
     }
 
     private String extractPackageName(Node root, String content) {
+        // Java, Kotlin
         Node packageNode = findFirstChild(root, "package_declaration");
         if (packageNode != null) {
             Node scopedIdentifier = findFirstChild(packageNode, "scoped_identifier");
@@ -145,11 +176,22 @@ public class TreeSitterParser implements AutoCloseable {
                 return getNodeText(identifier, content);
             }
         }
+        
+        // Python - module name could be extracted from imports but typically not in AST
+        // Go - package declaration
+        packageNode = findFirstChild(root, "package_clause");
+        if (packageNode != null) {
+            Node identifier = findFirstChild(packageNode, "package_identifier");
+            if (identifier != null) {
+                return getNodeText(identifier, content);
+            }
+        }
+        
         return "";
     }
 
     private String extractClassName(Node root, String content) {
-        // Look for class_declaration, interface_declaration, or enum_declaration
+        // Java, Kotlin - class_declaration, interface_declaration, enum_declaration
         Node classNode = findFirstChild(root, "class_declaration");
         if (classNode == null) {
             classNode = findFirstChild(root, "interface_declaration");
@@ -157,9 +199,49 @@ public class TreeSitterParser implements AutoCloseable {
         if (classNode == null) {
             classNode = findFirstChild(root, "enum_declaration");
         }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "object_declaration"); // Kotlin
+        }
+        
+        // Python - class_definition
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_definition");
+        }
+        
+        // TypeScript/JavaScript - class_declaration
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_declaration");
+        }
+        
+        // Go - type_declaration with type_spec
+        if (classNode == null) {
+            Node typeDecl = findFirstChild(root, "type_declaration");
+            if (typeDecl != null) {
+                classNode = findFirstChild(typeDecl, "type_spec");
+            }
+        }
+        
+        // C++/C# - class_specifier
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_specifier");
+        }
+        
+        // Rust - struct_item, enum_item, trait_item
+        if (classNode == null) {
+            classNode = findFirstChild(root, "struct_item");
+        }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "enum_item");
+        }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "trait_item");
+        }
 
         if (classNode != null) {
             Node nameNode = findFirstChild(classNode, "identifier");
+            if (nameNode == null) {
+                nameNode = findFirstChild(classNode, "type_identifier");
+            }
             if (nameNode != null) {
                 return getNodeText(nameNode, content);
             }
@@ -170,24 +252,64 @@ public class TreeSitterParser implements AutoCloseable {
     private List<String> extractProperties(Node root, String content) {
         List<String> properties = new ArrayList<>();
 
-        // Find class body
+        // Find class/struct body depending on language
         Node classNode = findFirstChild(root, "class_declaration");
         if (classNode == null) {
             classNode = findFirstChild(root, "interface_declaration");
         }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_definition"); // Python
+        }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "struct_item"); // Rust
+        }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_specifier"); // C++
+        }
 
         if (classNode != null) {
+            // Java/Kotlin/TypeScript - class_body
             Node classBody = findFirstChild(classNode, "class_body");
+            if (classBody == null) {
+                classBody = findFirstChild(classNode, "declaration_list"); // Python
+            }
+            if (classBody == null) {
+                classBody = findFirstChild(classNode, "field_declaration_list"); // Rust
+            }
+            if (classBody == null) {
+                classBody = findFirstChild(classNode, "field_declaration_list"); // C++
+            }
+            
             if (classBody != null) {
                 for (int i = 0; i < classBody.getChildCount(); i++) {
                     Node child = classBody.getChild(i);
-                    if ("field_declaration".equals(child.getType())) {
+                    String childType = child.getType();
+                    
+                    // Java/Kotlin
+                    if ("field_declaration".equals(childType)) {
                         Node declarator = findFirstChild(child, "variable_declarator");
                         if (declarator != null) {
                             Node nameNode = findFirstChild(declarator, "identifier");
                             if (nameNode != null) {
                                 properties.add(getNodeText(nameNode, content));
                             }
+                        }
+                    }
+                    // Python - assignment in class
+                    else if ("expression_statement".equals(childType)) {
+                        Node assignment = findFirstChild(child, "assignment");
+                        if (assignment != null) {
+                            Node left = findFirstChild(assignment, "identifier");
+                            if (left != null) {
+                                properties.add(getNodeText(left, content));
+                            }
+                        }
+                    }
+                    // Rust - field_declaration
+                    else if ("field_declaration".equals(childType)) {
+                        Node nameNode = findFirstChild(child, "field_identifier");
+                        if (nameNode != null) {
+                            properties.add(getNodeText(nameNode, content));
                         }
                     }
                 }
@@ -200,23 +322,76 @@ public class TreeSitterParser implements AutoCloseable {
     private List<CodeMetadata.MethodInfo> extractMethods(Node root, String content) {
         List<CodeMetadata.MethodInfo> methods = new ArrayList<>();
 
-        // Find class body
+        // Find class body depending on language
         Node classNode = findFirstChild(root, "class_declaration");
         if (classNode == null) {
             classNode = findFirstChild(root, "interface_declaration");
         }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "class_definition"); // Python
+        }
+        if (classNode == null) {
+            classNode = findFirstChild(root, "impl_item"); // Rust
+        }
 
         if (classNode != null) {
             Node classBody = findFirstChild(classNode, "class_body");
+            if (classBody == null) {
+                classBody = findFirstChild(classNode, "declaration_list"); // Python, Rust
+            }
+            if (classBody == null) {
+                classBody = classNode; // For impl_item in Rust
+            }
+            
             if (classBody != null) {
                 for (int i = 0; i < classBody.getChildCount(); i++) {
                     Node child = classBody.getChild(i);
-                    if ("method_declaration".equals(child.getType()) ||
-                            "constructor_declaration".equals(child.getType())) {
+                    String childType = child.getType();
+                    
+                    // Java/Kotlin/TypeScript
+                    if ("method_declaration".equals(childType) ||
+                            "constructor_declaration".equals(childType)) {
                         CodeMetadata.MethodInfo methodInfo = extractMethodInfo(child, content);
                         if (methodInfo != null) {
                             methods.add(methodInfo);
                         }
+                    }
+                    // Python - function_definition
+                    else if ("function_definition".equals(childType)) {
+                        CodeMetadata.MethodInfo methodInfo = extractMethodInfo(child, content);
+                        if (methodInfo != null) {
+                            methods.add(methodInfo);
+                        }
+                    }
+                    // Rust - function_item
+                    else if ("function_item".equals(childType)) {
+                        CodeMetadata.MethodInfo methodInfo = extractMethodInfo(child, content);
+                        if (methodInfo != null) {
+                            methods.add(methodInfo);
+                        }
+                    }
+                    // Go - function_declaration, method_declaration
+                    else if ("function_declaration".equals(childType)) {
+                        CodeMetadata.MethodInfo methodInfo = extractMethodInfo(child, content);
+                        if (methodInfo != null) {
+                            methods.add(methodInfo);
+                        }
+                    }
+                }
+            }
+        } else {
+            // For languages without explicit class structure (like Go, Rust modules)
+            // Extract top-level functions
+            for (int i = 0; i < root.getChildCount(); i++) {
+                Node child = root.getChild(i);
+                String childType = child.getType();
+                
+                if ("function_declaration".equals(childType) || // Go
+                        "function_item".equals(childType) || // Rust
+                        "function_definition".equals(childType)) { // Python
+                    CodeMetadata.MethodInfo methodInfo = extractMethodInfo(child, content);
+                    if (methodInfo != null) {
+                        methods.add(methodInfo);
                     }
                 }
             }
@@ -231,13 +406,17 @@ public class TreeSitterParser implements AutoCloseable {
         List<String> parameters = new ArrayList<>();
         List<String> callees = new ArrayList<>();
 
-        // Extract method name
+        // Extract method name - works for most languages
         Node nameNode = findFirstChild(methodNode, "identifier");
+        if (nameNode == null) {
+            nameNode = findFirstChild(methodNode, "field_identifier"); // Rust
+        }
         if (nameNode != null) {
             methodName = getNodeText(nameNode, content);
         }
 
-        // Extract return type
+        // Extract return type (language-specific)
+        // Java/Kotlin/TypeScript
         Node typeNode = findFirstChild(methodNode, "type_identifier");
         if (typeNode == null) {
             typeNode = findFirstChild(methodNode, "void_type");
@@ -248,16 +427,54 @@ public class TreeSitterParser implements AutoCloseable {
                 typeNode = genericType;
             }
         }
+        // Python - type annotation
+        if (typeNode == null) {
+            Node typeAnnotation = findFirstChild(methodNode, "type");
+            if (typeAnnotation != null) {
+                typeNode = typeAnnotation;
+            }
+        }
+        // Rust - return type
+        if (typeNode == null) {
+            Node returnTypeNode = findFirstChild(methodNode, "primitive_type");
+            if (returnTypeNode != null) {
+                typeNode = returnTypeNode;
+            }
+        }
         if (typeNode != null) {
             returnType = getNodeText(typeNode, content);
         }
 
         // Extract parameters
+        // Java/Kotlin/TypeScript - formal_parameters
         Node formalParams = findFirstChild(methodNode, "formal_parameters");
+        // Python - parameters
+        if (formalParams == null) {
+            formalParams = findFirstChild(methodNode, "parameters");
+        }
+        // Rust - parameters
+        if (formalParams == null) {
+            formalParams = findFirstChild(methodNode, "parameters");
+        }
+        
         if (formalParams != null) {
             for (int i = 0; i < formalParams.getChildCount(); i++) {
                 Node child = formalParams.getChild(i);
-                if ("formal_parameter".equals(child.getType())) {
+                String childType = child.getType();
+                
+                // Java/Kotlin/TypeScript
+                if ("formal_parameter".equals(childType)) {
+                    Node paramName = findFirstChild(child, "identifier");
+                    if (paramName != null) {
+                        parameters.add(getNodeText(paramName, content));
+                    }
+                }
+                // Python - identifier
+                else if ("identifier".equals(childType)) {
+                    parameters.add(getNodeText(child, content));
+                }
+                // Rust - parameter
+                else if ("parameter".equals(childType)) {
                     Node paramName = findFirstChild(child, "identifier");
                     if (paramName != null) {
                         parameters.add(getNodeText(paramName, content));
@@ -268,6 +485,9 @@ public class TreeSitterParser implements AutoCloseable {
 
         // Extract method body and find method calls
         Node body = findFirstChild(methodNode, "block");
+        if (body == null) {
+            body = findFirstChild(methodNode, "body"); // Alternative for some languages
+        }
         String methodBody = "";
         if (body != null) {
             methodBody = getNodeText(body, content);
@@ -299,12 +519,44 @@ public class TreeSitterParser implements AutoCloseable {
             return;
         }
 
-        // Look for method_invocation nodes
-        if ("method_invocation".equals(node.getType())) {
+        String nodeType = node.getType();
+        
+        // Java/Kotlin/TypeScript - method_invocation
+        if ("method_invocation".equals(nodeType)) {
             Node nameNode = findFirstChild(node, "identifier");
             if (nameNode != null) {
                 String methodName = getNodeText(nameNode, content);
                 calls.add(methodName);
+            }
+        }
+        // Python - call
+        else if ("call".equals(nodeType)) {
+            Node function = findFirstChild(node, "identifier");
+            if (function == null) {
+                function = findFirstChild(node, "attribute");
+            }
+            if (function != null) {
+                calls.add(getNodeText(function, content));
+            }
+        }
+        // Rust - call_expression
+        else if ("call_expression".equals(nodeType)) {
+            Node function = findFirstChild(node, "identifier");
+            if (function == null) {
+                function = findFirstChild(node, "field_expression");
+            }
+            if (function != null) {
+                calls.add(getNodeText(function, content));
+            }
+        }
+        // Go - call_expression
+        else if ("call_expression".equals(nodeType)) {
+            Node function = findFirstChild(node, "identifier");
+            if (function == null) {
+                function = findFirstChild(node, "selector_expression");
+            }
+            if (function != null) {
+                calls.add(getNodeText(function, content));
             }
         }
 
