@@ -64,7 +64,8 @@ class TreeSitterParserTest {
             System.out.println("Tree-sitter native libraries not available, as expected." + e.getMessage());
             // Expected in environments without native libraries
             assertTrue(e.getMessage().contains("ch.usi.si.seart.treesitter") ||
-                            e.getMessage().contains("Language"),
+                            e.getMessage().contains("Language") ||
+                            e.getMessage().contains("Tree-sitter native library"),
                     "Error should be related to tree-sitter native library");
         }
     }

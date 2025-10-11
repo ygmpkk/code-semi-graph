@@ -1,5 +1,6 @@
 package com.ygmpkk.codesearch;
 
+import ch.usi.si.seart.treesitter.Language;
 import com.ygmpkk.codesearch.config.AppConfig;
 import com.ygmpkk.codesearch.config.ConfigLoader;
 import com.ygmpkk.codesearch.db.ArcadeDBVectorDatabase;
@@ -10,6 +11,7 @@ import com.ygmpkk.codesearch.embedding.EmbeddingModel;
 import com.ygmpkk.codesearch.parser.TreeSitterParser;
 import com.ygmpkk.codesearch.parser.CodeMetadata;
 import com.ygmpkk.codesearch.parser.CodeChunker;
+import com.ygmpkk.codesearch.parser.LanguageDetector;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -22,7 +24,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.stream.Stream;
 
@@ -137,39 +142,62 @@ public class SemiBuildCommand implements Callable<Integer> {
                     CodeChunker chunker = new CodeChunker();
                     int totalChunks = 0;
                     int totalCallChains = 0;
-                    TreeSitterParser treeSitterParser = null;
+                    // Cache parsers by language to avoid recreating them
+                    Map<Language, TreeSitterParser> parserCache = new HashMap<>();
+                    final boolean[] treeSitterAvailable = {true}; // Use array to allow mutation in lambda
 
                     for (Path file : filesToIndex) {
                         try {
-                            // Parse the file with tree-sitter (only Java files for now)
-                            if (!file.toString().endsWith(".java")) {
-                                // Fall back to simple embedding for non-Java files
+                            // Detect language from file extension
+                            Optional<Language> detectedLanguage = LanguageDetector.detectLanguage(file);
+                            
+                            if (detectedLanguage.isEmpty()) {
+                                // Not a supported language for tree-sitter, use simple embedding
                                 String content = Files.readString(file);
                                 float[] embedding = embeddingModel.generateEmbedding(content);
                                 vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                logger.debug("Indexed (non-Java): {}", file);
+                                logger.debug("Indexed (unsupported language): {}", file);
                                 continue;
                             }
 
-                            // Lazy initialization of tree-sitter parser for Java files
-                            if (treeSitterParser == null) {
-                                try {
-                                    treeSitterParser = new TreeSitterParser();
-                                    logger.debug("TreeSitter parser initialized for Java parsing");
-                                } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
-                                    logger.warn("TreeSitter native libraries not available. Falling back to simple indexing: {}", e.getMessage());
-                                    // Fall back to simple embedding
-                                    String content = Files.readString(file);
-                                    float[] embedding = embeddingModel.generateEmbedding(content);
-                                    vectorDb.storeEmbedding(file.toString(), content, embedding);
-                                    logger.debug("Indexed (fallback): {}", file);
-                                    continue;
-                                }
+                            // Check if tree-sitter is available (only once)
+                            if (!treeSitterAvailable[0]) {
+                                // Fall back to simple embedding
+                                String content = Files.readString(file);
+                                float[] embedding = embeddingModel.generateEmbedding(content);
+                                vectorDb.storeEmbedding(file.toString(), content, embedding);
+                                logger.debug("Indexed (tree-sitter unavailable): {}", file);
+                                continue;
                             }
 
-                            CodeMetadata metadata = treeSitterParser.parseJavaFile(file);
-                            logger.debug("Parsed {}: package={}, class={}, methods={}",
-                                    file, metadata.packageName(), metadata.className(), metadata.methods().size());
+                            Language language = detectedLanguage.get();
+                            
+                            // Get or create parser for this language
+                            TreeSitterParser treeSitterParser = parserCache.get(language);
+                            if (treeSitterParser == null && treeSitterAvailable[0]) {
+                                try {
+                                    treeSitterParser = new TreeSitterParser(language);
+                                    parserCache.put(language, treeSitterParser);
+                                    logger.debug("TreeSitter parser initialized for {} parsing", language.name());
+                                } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+                                    logger.warn("TreeSitter native libraries not available. Falling back to simple indexing: {}", e.getMessage());
+                                    treeSitterAvailable[0] = false;
+                                    treeSitterParser = null;
+                                }
+                            }
+                            
+                            if (treeSitterParser == null) {
+                                // Tree-sitter initialization failed, fall back to simple embedding
+                                String content = Files.readString(file);
+                                float[] embedding = embeddingModel.generateEmbedding(content);
+                                vectorDb.storeEmbedding(file.toString(), content, embedding);
+                                logger.debug("Indexed (fallback): {}", file);
+                                continue;
+                            }
+
+                            CodeMetadata metadata = treeSitterParser.parseFile(file);
+                            logger.debug("Parsed {} ({}): package={}, class={}, methods={}",
+                                    file, language.name(), metadata.packageName(), metadata.className(), metadata.methods().size());
 
                             // Add class node to graph
                             String classNodeId = metadata.filePath() + ":" + metadata.className();
@@ -220,12 +248,14 @@ public class SemiBuildCommand implements Callable<Integer> {
                         }
                     }
                     
-                    // Close tree-sitter parser if it was initialized
-                    if (treeSitterParser != null) {
-                        try {
-                            treeSitterParser.close();
-                        } catch (Exception e) {
-                            logger.debug("Error closing tree-sitter parser: {}", e.getMessage());
+                    // Close all tree-sitter parsers
+                    for (TreeSitterParser parser : parserCache.values()) {
+                        if (parser != null) {
+                            try {
+                                parser.close();
+                            } catch (Exception e) {
+                                logger.debug("Error closing tree-sitter parser: {}", e.getMessage());
+                            }
                         }
                     }
 
