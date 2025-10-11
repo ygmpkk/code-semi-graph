@@ -5,7 +5,7 @@ A command line for semi or graph code search
 
 - **Semi Code Search**: Perform semi-structured code search with customizable options
   - **Build Index**: Build embedding index using configurable embedding models with intelligent code parsing
-  - **Tree-sitter Integration**: Parse source code AST for Java files to extract structure
+  - **Tree-sitter Integration**: Parse source code AST for 25+ languages to extract structure
   - **Intelligent Chunking**: Split code by method blocks (max 32K tokens per chunk)
   - **Metadata Extraction**: Capture package name, class name, properties, methods, and call chains
   - **Embedding Strategies**: Support for multiple embedding sources:
@@ -74,13 +74,14 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi build
 
 The build command will:
 - Scan your codebase for code files
-- **Parse Java files with tree-sitter** to extract package, class, method, and property information
+- **Automatically detect language from file extension**
+- **Parse files with tree-sitter** to extract package, class, method, and property information for 25+ languages
 - **Chunk code intelligently** by method blocks (max 32K tokens per chunk) with full metadata context
 - **Extract call chains** by analyzing method invocations in the AST
 - Generate embeddings for each code chunk using the specified embedding model
 - Store chunks with metadata in ArcadeDB vector database at `~/.code-semi-graph/index/arcadedb-vector`
 - Store call chain relationships in ArcadeDB graph database at `~/.code-semi-graph/index/arcadedb-graph`
-- For non-Java files, fall back to simple file-based embedding
+- For unsupported file types, fall back to simple file-based embedding
 
 Each code chunk includes:
 - File path, package name, class name, method name
@@ -135,13 +136,27 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi build --path ./src --extensi
 
 #### Tree-sitter Code Parsing
 
-The build command uses tree-sitter to parse Java source files and extract detailed code structure:
+The build command uses tree-sitter to automatically parse source files based on their file extension. It supports **25+ programming languages** including:
+
+**Supported Languages:**
+- Java, Kotlin, Scala
+- Python
+- JavaScript, TypeScript, TSX
+- Go
+- Rust
+- C, C++, C#
+- Ruby, PHP
+- Swift
+- Dart
+- Lua
+- R
+- Bash/Shell
 
 **What gets extracted:**
-- Package declarations
-- Class/interface/enum names
+- Package/module declarations (language-specific)
+- Class/interface/enum/struct/trait names
 - Field declarations (properties)
-- Method declarations with signatures
+- Method/function declarations with signatures
 - Method call chains (which methods call which)
 
 **Intelligent Chunking:**
@@ -156,10 +171,15 @@ The build command uses tree-sitter to parse Java source files and extract detail
 - Stores edges for "contains" (class contains method) and "calls" (method calls method)
 - Enables graph-based code exploration and dependency analysis
 
+**Automatic Language Detection:**
+- Detects language from file extension automatically
+- No manual configuration needed
+- Supports all tree-sitter languages with a single parser
+
 **Fallback Behavior:**
 - Tree-sitter requires native libraries for optimal performance
 - If native libraries are not available, automatically falls back to simple file-based indexing
-- Non-Java files always use simple file-based indexing
+- Unsupported file types use simple file-based indexing
 
 #### Configuration File
 
@@ -207,7 +227,7 @@ java -jar build/libs/code-semi-graph-1.0.0.jar semi "function name" --index-dir 
 
 Perform a graph-based code search using ArcadeDB graph database. The graph database stores code relationships such as class-method containment and method call chains.
 
-**Note:** The graph database is automatically populated when running `semi build` on Java files with tree-sitter parsing enabled.
+**Note:** The graph database is automatically populated when running `semi build` on supported source files with tree-sitter parsing enabled.
 
 ```bash
 java -jar build/libs/code-semi-graph-1.0.0.jar graph "node identifier"
