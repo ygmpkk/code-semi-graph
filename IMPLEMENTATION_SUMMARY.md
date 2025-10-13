@@ -1,20 +1,25 @@
 # Tree-sitter Integration Implementation Summary
 
 ## Overview
-Successfully implemented tree-sitter integration for parsing Java source code AST, extracting call chains, intelligent chunking, and storing structured data in both graph and vector databases.
+Successfully implemented tree-sitter integration for parsing source code AST in **25+ programming languages**, extracting call chains, intelligent chunking, and storing structured data in both graph and vector databases with automatic language detection from file extensions.
 
 ## What Was Implemented
 
 ### 1. Tree-sitter Parser Integration
 - **Dependency**: Added `ch.usi.si.seart:java-tree-sitter:1.12.0`
 - **Parser Class**: `TreeSitterParser.java`
-  - Parses Java source files into Abstract Syntax Tree (AST)
-  - Extracts package declarations
-  - Extracts class/interface/enum names
+  - Parses source files into Abstract Syntax Tree (AST) for multiple languages
+  - Accepts Language parameter to support any tree-sitter language
+  - Extracts package/module declarations (language-specific)
+  - Extracts class/interface/enum/struct/trait names
   - Extracts field declarations (properties)
-  - Extracts method declarations with signatures
+  - Extracts method/function declarations with signatures
   - Analyzes method calls to build call chains
   - Handles graceful fallback when native libraries unavailable
+- **Language Detector**: `LanguageDetector.java`
+  - Maps file extensions to tree-sitter Language enums
+  - Supports 25+ languages: Java, Python, JavaScript, TypeScript, Go, Rust, Kotlin, C, C++, C#, Ruby, PHP, Swift, Scala, Dart, Lua, R, Bash, and more
+  - Automatic language detection from file path
 
 ### 2. Code Metadata Model
 - **Record Type**: `CodeMetadata.java`
@@ -65,9 +70,10 @@ Successfully implemented tree-sitter integration for parsing Java source code AS
 
 ### 6. Updated Build Command
 - **Enhanced Processing**: `SemiBuildCommand.java`
-  - Lazy initialization of tree-sitter parser
-  - Processes Java files with AST parsing
-  - Falls back to simple file embedding for non-Java or when parser unavailable
+  - Automatic language detection from file extensions
+  - Lazy initialization and caching of tree-sitter parsers per language
+  - Processes supported source files with AST parsing (25+ languages)
+  - Falls back to simple file embedding for unsupported types or when parser unavailable
   - Creates both vector and graph databases
   - Reports detailed statistics:
     - Total chunks stored
@@ -77,6 +83,7 @@ Successfully implemented tree-sitter integration for parsing Java source code AS
 
 ### 7. Comprehensive Testing
 - **Unit Tests**:
+  - `LanguageDetectorTest.java`: Tests language detection from file extensions
   - `CodeChunkerTest.java`: Tests chunking logic
   - `TreeSitterParserTest.java`: Tests parser with conditional execution
 - **Test Coverage**:
@@ -88,6 +95,8 @@ Successfully implemented tree-sitter integration for parsing Java source code AS
 
 ### 8. Documentation
 - **README.md** updated with:
+  - Multi-language support (25+ languages)
+  - Automatic language detection from file extensions
   - Tree-sitter integration features
   - Intelligent chunking details
   - Call chain graph explanation
@@ -96,6 +105,13 @@ Successfully implemented tree-sitter integration for parsing Java source code AS
   - Key dependencies list
 
 ## Technical Highlights
+
+### Multi-Language Support
+The implementation now supports 25+ programming languages:
+1. **Automatic detection**: Language detected from file extension
+2. **Parser caching**: One parser instance per language for efficiency
+3. **Generic AST handling**: Adapts extraction logic to language-specific AST nodes
+4. **Unified metadata model**: All languages produce the same CodeMetadata structure
 
 ### Graceful Fallback
 The implementation handles environments without tree-sitter native libraries:
@@ -182,7 +198,7 @@ Explores:
 
 ## Future Enhancements
 
-1. Support for more languages (Python, JavaScript, TypeScript, etc.)
+1. ✅ ~~Support for more languages (Python, JavaScript, TypeScript, etc.)~~ - **Completed!**
 2. Extract class inheritance relationships
 3. Extract import/usage relationships
 4. Cross-file call chain analysis
@@ -193,14 +209,17 @@ Explores:
 
 ### New Files
 - `src/main/java/com/ygmpkk/codesearch/parser/TreeSitterParser.java`
+- `src/main/java/com/ygmpkk/codesearch/parser/LanguageDetector.java` - **NEW: Multi-language support**
 - `src/main/java/com/ygmpkk/codesearch/parser/CodeMetadata.java`
 - `src/main/java/com/ygmpkk/codesearch/parser/CodeChunker.java`
 - `src/test/java/com/ygmpkk/codesearch/parser/CodeChunkerTest.java`
+- `src/test/java/com/ygmpkk/codesearch/parser/LanguageDetectorTest.java` - **NEW: Language detection tests**
 - `src/test/java/com/ygmpkk/codesearch/parser/TreeSitterParserTest.java`
 
 ### Modified Files
 - `build.gradle`: Added tree-sitter dependency
-- `src/main/java/com/ygmpkk/codesearch/SemiBuildCommand.java`: Integrated parsing and chunking
+- `src/main/java/com/ygmpkk/codesearch/SemiBuildCommand.java`: Integrated parsing, chunking, and **multi-language detection**
+- `src/main/java/com/ygmpkk/codesearch/parser/TreeSitterParser.java`: **Updated to support multiple languages**
 - `src/main/java/com/ygmpkk/codesearch/db/VectorDatabase.java`: Added metadata support
 - `src/main/java/com/ygmpkk/codesearch/db/ArcadeDBVectorDatabase.java`: Implemented metadata storage
 - `README.md`: Comprehensive documentation updates
@@ -208,7 +227,8 @@ Explores:
 ## Conclusion
 
 The tree-sitter integration successfully achieves the goal of optimizing the build method with:
-- ✅ AST parsing of Java source code
+- ✅ AST parsing of **25+ programming languages** (not just Java!)
+- ✅ **Automatic language detection** from file extensions
 - ✅ Call chain extraction and graph storage
 - ✅ Intelligent chunking by methods (max 32K tokens)
 - ✅ Rich metadata (package, class, method, properties)
@@ -216,4 +236,4 @@ The tree-sitter integration successfully achieves the goal of optimizing the bui
 - ✅ Graceful fallback without native libraries
 - ✅ Comprehensive testing and documentation
 
-The implementation provides a solid foundation for advanced code search and analysis capabilities.
+The implementation provides a solid foundation for advanced code search and analysis capabilities across multiple programming languages.
